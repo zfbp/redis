@@ -23,7 +23,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 	return(TRUE);
 }
 
-static redisContext* rc = NULL;
 #define MQ_EXPORT __declspec(dllexport)
 
 #ifdef __cplusplus
@@ -69,17 +68,14 @@ extern "C" {
 		return redisFormatCommandArgv(target, argc, argv, argvlen);
 	}
 
-	MQ_EXPORT bool __stdcall mqConnect(const wchar_t *ip, int port)
+	MQ_EXPORT void * __stdcall mqConnect(const wchar_t *ip, int port)
 	{
 		char buf[128];
 		size_t sz = wcstombs(buf, ip, sizeof(buf));
 		if (sz > 0 && sz <= sizeof(buf)) {
-			rc = redisConnect(buf, port);
-			if (rc != NULL) {
-				return true;
-			}
+			return redisConnect(buf, port);
 		}
-		return false;
+		return NULL;
 	}
 
 	MQ_EXPORT void* __stdcall mqConnectWithTimeout(const wchar_t *ip, int port, const struct timeval tv)
@@ -200,7 +196,7 @@ extern "C" {
 		return redisvCommand((redisContext *)c, format, ap);
 	}
 
-	MQ_EXPORT const wchar_t *mqCommand(const wchar_t *format)
+	MQ_EXPORT const wchar_t *mqCommand(redisContext* rc, const wchar_t *format)
 	{
 		char buf[1024];
 		size_t sz = wcstombs(buf, format, sizeof(buf));
