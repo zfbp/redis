@@ -152,7 +152,7 @@
       <ModuleDefinitionFile>hiredis.def</ModuleDefinitionFile>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(TargetPath) D:\projects\mqredis</Command>
+      <Command>copy $(TargetPath) $(USERPROFILE)\projects\mqredis</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
