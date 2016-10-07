@@ -11,7 +11,6 @@ int main(int argc, char **argv) {
 extern "C" {
 #endif
 
-
 	void mqLog(const char*format, ...) {
 		FILE* f = fopen("D:\\mqDebug.log", "a+");
 		va_list args;
