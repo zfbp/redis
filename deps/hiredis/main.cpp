@@ -12,16 +12,24 @@ extern "C" {
 #endif
 
 
-    /* Function to free the reply objects hiredis returns by default. */
-    MQ_EXPORT void __stdcall mqFreeReplyObject(void *reply) {
-        freeReplyObject(reply);
-    }
+	/* Function to free the reply objects hiredis returns by default. */
+	MQ_EXPORT void __stdcall mqFreeReplyObject(void *reply) {
+		freeReplyObject(reply);
+	}
+
+	void mqLog(const char* s) {
+		FILE* file =fopen("D:\\projects\\mqredis\\debug.log", "a+");
+		fprintf(file, "%s\n", s);
+		fflush(file);
+		fclose(file);
+	}
 
     MQ_EXPORT redisContext* __stdcall mqConnect(const wchar_t *ip, int port)
     {
         char buf[128];
         size_t sz = wcstombs(buf, ip, sizeof(buf));
         if (sz > 0 && sz <= sizeof(buf)) {
+			mqLog(buf);
             return redisConnect(buf, port);
         }
         return NULL;
