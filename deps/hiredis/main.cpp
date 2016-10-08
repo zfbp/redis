@@ -17,12 +17,8 @@ extern "C" {
 		va_start(args, format);
 		vfprintf(f, format, args);
 		va_end(args);
+		fflush(f);
 		fclose(f);
-	}
-
-	char * CharArrayToStr(const char* fname, const char array[]) {
-		mqLog("%s%d\n", fname, sizeof(array));
-		return NULL;
 	}
 
 	/* Function to free the reply objects hiredis returns by default. */
@@ -35,8 +31,7 @@ extern "C" {
 		char buf[128];
 		size_t sz = wcstombs(buf, ip, sizeof(buf));
 		if (sz > 0 && sz <= sizeof(buf)) {
-			mqLog("%s:%d\n", buf, port);
-			//CharArrayToStr(__FUNCTION__, buf);
+			mqLog("%s:%s,%d\n", __FUNCTION__, buf, port);
 			return redisConnect(buf, port);
 		}
 		return NULL;
@@ -79,7 +74,6 @@ extern "C" {
 		char buf[1024];
 		size_t sz = wcstombs(buf, format, sizeof(buf));
 		if (sz > 0 && sz <= sizeof(buf)) {
-			CharArrayToStr(__FUNCTION__, buf);
 			redisReply* rp = (redisReply *)redisCommand(rc, buf);
 			if (rp != NULL) {
 				wchar_t * ret = (wchar_t*)malloc(sizeof(wchar_t) * (rp->len + 1));
