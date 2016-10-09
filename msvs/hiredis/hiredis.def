@@ -1,9 +1,11 @@
 EXPORTS
-redisConnect
 redisFree
 redisCommand
-redisCommand1 = redisCommand
-redisCommand2 = redisCommand
-redisCommand3 = redisCommand
-redisCommand4 = redisCommand
 freeReplyObject
+
+mqConnect
+mqLog
+mqReplyType
+mqReplyInt
+mqReplyStrLen
+mqReplyStr

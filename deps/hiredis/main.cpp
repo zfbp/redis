@@ -5,8 +5,6 @@ int main(int argc, char **argv) {
 	return 0;
 }
 
-#define MQ_EXPORT __declspec(dllexport)
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -21,94 +19,60 @@ extern "C" {
 		fclose(f);
 	}
 
-	/* Function to free the reply objects hiredis returns by default. */
-	MQ_EXPORT void __stdcall mqFreeReplyObject(void *reply) {
-		freeReplyObject(reply);
-	}
-
-	MQ_EXPORT redisContext* __stdcall mqConnect(const wchar_t *ip, int port)
+	redisContext* mqConnect(const wchar_t *ip, int port)
 	{
 		char buf[128];
 		size_t sz = wcstombs(buf, ip, sizeof(buf));
 		if (sz > 0 && sz <= sizeof(buf)) {
-			mqLog("%s:%s,%d\n", __FUNCTION__, buf, port);
 			return redisConnect(buf, port);
 		}
 		return NULL;
 	}
 
-	MQ_EXPORT redisContext* __stdcall mqConnect2(char *ip, int len, int port)
-	{
-		mqLog("%s:%s,%d,%d\n", __FUNCTION__, ip, len, port);
-		/*
-		redisContext* rc = NULL;
-		size_t size = len + 1;
-		char *pcstr = (char*)malloc(size * 2);
-		size_t sz = wcstombs(pcstr, ip, len);
-		mqLog("%s:sz,%d\n", __FUNCTION__, size);
-		if (sz > 0 && sz <= len + 1) {
-			rc = redisConnect(pcstr, port);
+	///* This is the reply object returned by redisCommand() */
+	//typedef struct redisReply {
+	//	int type; /* REDIS_REPLY_* */
+	//	PORT_LONGLONG integer; /* The integer when type is REDIS_REPLY_INTEGER */
+	//	int len; /* Length of string */
+	//	char *str; /* Used for both REDIS_REPLY_ERROR and REDIS_REPLY_STRING */
+	//	size_t elements; /* number of elements, for REDIS_REPLY_ARRAY */
+	//	struct redisReply **element; /* elements vector for REDIS_REPLY_ARRAY */
+	//} redisReply;
+
+	int mqReplyType(const redisReply* reply) {
+		return reply->type;
+	}
+
+	bool mqReplyInt(const redisReply* reply, PORT_LONGLONG* result) {
+		if (reply->type == REDIS_REPLY_INTEGER) {
+			*result = reply->integer;
+			return true;
 		}
-		free(pcstr);
-		return rc;*/
-		return redisConnect(ip, port);
+		return false;
 	}
 
-	MQ_EXPORT redisContext* __stdcall mqConnectWithTimeout(const wchar_t *ip, int port, long sec, long usec)
-	{
-		char buf[128];
-		size_t sz = wcstombs(buf, ip, sizeof(buf));
-		if (sz > 0 && sz <= sizeof(buf)) {
-			//struct timeval {
-			//	long    tv_sec;         /* seconds */
-			//	long    tv_usec;        /* and microseconds */
-			//}
-			timeval tv;
-			tv.tv_sec = sec;
-			tv.tv_usec = usec;
-			return redisConnectWithTimeout(buf, port, tv);
+	int mqReplyStrLen(const redisReply* reply) {
+		switch (reply->type) {
+		case REDIS_REPLY_ERROR:
+		case REDIS_REPLY_STATUS:
+		case REDIS_REPLY_STRING:
+			return reply->len;
+		default:
+			return -1;
 		}
-		return NULL;
 	}
 
-	MQ_EXPORT void __stdcall mqFree(redisContext *c)
-	{
-		redisFree(c);
-	}
-
-	/* Issue a command to Redis. In a blocking context, it is identical to calling
-	 * redisAppendCommand, followed by redisGetReply. The function will return
-	 * NULL if there was an error in performing the request, otherwise it will
-	 * return the reply. In a non-blocking context, it is identical to calling
-	 * only redisAppendCommand and will always return NULL. */
-	MQ_EXPORT void *__stdcall mqvCommand(redisContext *c, const char *format, va_list ap)
-	{
-		return redisvCommand(c, format, ap);
-	}
-
-	MQ_EXPORT const wchar_t *mqCommand(redisContext* rc, const wchar_t *format)
-	{
-		char buf[1024];
-		size_t sz = wcstombs(buf, format, sizeof(buf));
-		if (sz > 0 && sz <= sizeof(buf)) {
-			redisReply* rp = (redisReply *)redisCommand(rc, buf);
-			if (rp != NULL) {
-				wchar_t * ret = (wchar_t*)malloc(sizeof(wchar_t) * (rp->len + 1));
-				size_t retSz = mbstowcs(ret, rp->str, rp->len);
-				if (retSz > 0) {
-					ret[retSz] = '\0';
-					return ret;
-				}
-			}
+	bool mqReplyStr(const redisReply* reply, char* result) {
+		switch (reply->type) {
+		case REDIS_REPLY_ERROR:
+		case REDIS_REPLY_STATUS:
+		case REDIS_REPLY_STRING:
+			memcpy(result, reply->str, reply->len);
+			return true;
+		default:
+			return false;
 		}
-		return NULL;
 	}
-
-	MQ_EXPORT void *__stdcall mqCommandArgv(void *c, int argc, const char **argv, const size_t *argvlen)
-	{
-		return redisCommandArgv((redisContext *)c, argc, argv, argvlen);
-	}
-
 
 #ifdef __cplusplus
 }
