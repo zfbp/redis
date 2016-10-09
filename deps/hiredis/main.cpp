@@ -37,6 +37,23 @@ extern "C" {
 		return NULL;
 	}
 
+	MQ_EXPORT redisContext* __stdcall mqConnect2(char *ip, int len, int port)
+	{
+		mqLog("%s:%s,%d,%d\n", __FUNCTION__, ip, len, port);
+		/*
+		redisContext* rc = NULL;
+		size_t size = len + 1;
+		char *pcstr = (char*)malloc(size * 2);
+		size_t sz = wcstombs(pcstr, ip, len);
+		mqLog("%s:sz,%d\n", __FUNCTION__, size);
+		if (sz > 0 && sz <= len + 1) {
+			rc = redisConnect(pcstr, port);
+		}
+		free(pcstr);
+		return rc;*/
+		return redisConnect(ip, port);
+	}
+
 	MQ_EXPORT redisContext* __stdcall mqConnectWithTimeout(const wchar_t *ip, int port, long sec, long usec)
 	{
 		char buf[128];
