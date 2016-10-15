@@ -1,5 +1,6 @@
 #include "hiredis.h"
-#include <Windows.h>
+#include <stdlib.h>
+#include <memory.h>
 
 int main(int argc, char **argv) {
 	return 0;
@@ -8,6 +9,7 @@ int main(int argc, char **argv) {
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include "adapters/ae.h"
 
 	void mqLog(const char*format, ...) {
 		FILE* f = fopen("D:\\mqDebug.log", "a+");

@@ -3,9 +3,17 @@ redisFree
 redisCommand
 freeReplyObject
 
+redisAeAttach
+redisAsyncConnect
+redisAsyncCommand
+
+aeCreateEventLoop
+aeMain
+
 mqConnect
 mqLog
 mqReplyType
 mqReplyInt
 mqReplyStrLen
 mqReplyStr
+
