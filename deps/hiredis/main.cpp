@@ -76,6 +76,15 @@ extern "C" {
 		}
 	}
 
+	void onReply(redisAsyncContext *c, void *reply, void *privdata) {
+		mqLog("%s:%p\n", __FUNCTION__, reply);
+		*((void**)privdata) = &reply;
+	}
+
+	int mqSubscribe(redisAsyncContext *c, const char* channel, void* privdata) {
+		return redisAsyncCommand(c, onReply, privdata, "SUBSCRIBE %s", channel);
+	}
+
 #ifdef __cplusplus
 }
 #endif

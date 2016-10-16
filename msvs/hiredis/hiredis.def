@@ -16,4 +16,4 @@ mqReplyType
 mqReplyInt
 mqReplyStrLen
 mqReplyStr
-
+mqSubscribe
