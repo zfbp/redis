@@ -9,6 +9,7 @@ redisAsyncCommand
 
 aeCreateEventLoop
 aeMain
+aeProcessEvents
 
 mqConnect
 mqLog
@@ -17,3 +18,4 @@ mqReplyInt
 mqReplyStrLen
 mqReplyStr
 mqSubscribe
+mqProcessEvents

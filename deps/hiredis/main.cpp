@@ -77,12 +77,22 @@ extern "C" {
 	}
 
 	void onReply(redisAsyncContext *c, void *reply, void *privdata) {
-		mqLog("%s:%p\n", __FUNCTION__, reply);
-		*((void**)privdata) = &reply;
+		mqLog("%s:%p,%p\n", __FUNCTION__, reply, privdata);
+		*((void**)privdata) = reply;
 	}
 
 	int mqSubscribe(redisAsyncContext *c, const char* channel, void* privdata) {
+		mqLog("%s:%s,%p\n", __FUNCTION__, channel, privdata);
 		return redisAsyncCommand(c, onReply, privdata, "SUBSCRIBE %s", channel);
+	}
+
+	void mqProcessEvents(aeEventLoop *eventLoop){
+		mqLog("%s:%p,%d\n", __FUNCTION__, eventLoop, eventLoop->stop);
+		if (!eventLoop->stop) {
+			if (eventLoop->beforesleep != NULL)
+				eventLoop->beforesleep(eventLoop);
+			aeProcessEvents(eventLoop, AE_ALL_EVENTS);
+		}
 	}
 
 #ifdef __cplusplus
