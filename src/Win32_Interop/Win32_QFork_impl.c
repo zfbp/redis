@@ -20,7 +20,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "..\redis.h"
+#include "..\server.h"
 #include "Win32_Portability.h"
 
 void SetupRedisGlobals(LPVOID redisData, size_t redisDataSize, uint32_t dictHashSeed)
@@ -35,12 +35,12 @@ int do_rdbSave(char* filename)
 {
 #ifndef NO_QFORKIMPL
     server.rdb_child_pid = GetCurrentProcessId();
-    if( rdbSave(filename) != REDIS_OK ) {
-        redisLog(REDIS_WARNING,"rdbSave failed in qfork: %s", strerror(errno));
-        return REDIS_ERR;
+    if( rdbSave(filename) != C_OK ) {
+        serverLog(LL_WARNING,"rdbSave failed in qfork: %s", strerror(errno));
+        return C_ERR;
     }
 #endif
-    return REDIS_OK;
+    return C_OK;
 }
 
 int do_aofSave(char* filename, int aof_pipe_read_ack, int aof_pipe_read_data, int aof_pipe_write_ack)
@@ -55,12 +55,12 @@ int do_aofSave(char* filename, int aof_pipe_read_ack, int aof_pipe_read_data, in
     server.aof_pipe_read_ack_from_child = -1;
     server.aof_pipe_write_ack_to_child = -1;
     server.aof_pipe_write_data_to_child = -1;
-    if (rewriteAppendOnlyFile(filename) != REDIS_OK) {
-        redisLog(REDIS_WARNING, "rewriteAppendOnlyFile failed in qfork: %s", strerror(errno));
-        return REDIS_ERR;
+    if (rewriteAppendOnlyFile(filename) != C_OK) {
+        serverLog(LL_WARNING, "rewriteAppendOnlyFile failed in qfork: %s", strerror(errno));
+        return C_ERR;
     }
 #endif
-    return REDIS_OK;
+    return C_OK;
 }
 
 int rdbSaveRioWithEOFMark(rio *rdb, int *error);
@@ -86,14 +86,14 @@ int do_rdbSaveToSlavesSockets(int *fds, int numfds, uint64_t *clientids)
     redisSetProcTitle("redis-rdb-to-slaves");
     
     retval = rdbSaveRioWithEOFMark(&slave_sockets,NULL);
-    if (retval == REDIS_OK && rioFlush(&slave_sockets) == 0)
-        retval = REDIS_ERR;
+    if (retval == C_OK && rioFlush(&slave_sockets) == 0)
+        retval = C_ERR;
     
-    if (retval == REDIS_OK) {
+    if (retval == C_OK) {
         size_t private_dirty = zmalloc_get_private_dirty();
     
         if (private_dirty) {
-            redisLog(REDIS_NOTICE,
+            serverLog(LL_NOTICE,
                 "RDB: %Iu MB of memory used by copy-on-write",                  WIN_PORT_FIX /* %zu -> %Iu */
                 private_dirty/(1024*1024));
         }
@@ -133,12 +133,12 @@ int do_rdbSaveToSlavesSockets(int *fds, int numfds, uint64_t *clientids)
             write(server.rdb_pipe_write_result_to_parent,msg,msglen)
             != msglen)
         {
-            retval = REDIS_ERR;
+            retval = C_ERR;
         }
     }
     return retval;
 #endif
-    return REDIS_OK;
+    return C_OK;
 }
 
 int do_socketSave(int *fds, int numfds, uint64_t *clientids, int pipe_write_fd)

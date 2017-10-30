@@ -33,14 +33,14 @@
 #include <stdio.h>
 #include <sys/types.h>
 #ifdef _WIN32
-  #include <sys/types.h> 
-  #include <sys/timeb.h>
-  #include "../src/Win32_Interop/Win32_FDAPI.h"
-  #include "../src/Win32_Interop/Win32_Service.h"
+#include <sys/types.h> 
+#include <sys/timeb.h>
+#include "../../src/Win32_Interop/Win32_FDAPI.h"
+#include "../../src/Win32_Interop/Win32_Service.h"
 #else
-  #include <sys/time.h>
-  #include <unistd.h>
-  #include <poll.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <poll.h>
 #endif
 #include <stdlib.h>
 #include <string.h>
@@ -241,21 +241,12 @@ PORT_LONGLONG aeCreateTimeEvent(aeEventLoop *eventLoop, PORT_LONGLONG millisecon
 
 int aeDeleteTimeEvent(aeEventLoop *eventLoop, PORT_LONGLONG id)
 {
-    aeTimeEvent *te, *prev = NULL;
-
-    te = eventLoop->timeEventHead;
+    aeTimeEvent *te = eventLoop->timeEventHead;
     while(te) {
         if (te->id == id) {
-            if (prev == NULL)
-                eventLoop->timeEventHead = te->next;
-            else
-                prev->next = te->next;
-            if (te->finalizerProc)
-                te->finalizerProc(eventLoop, te->clientData);
-            zfree(te);
+            te->id = AE_DELETED_EVENT_ID;
             return AE_OK;
         }
-        prev = te;
         te = te->next;
     }
     return AE_ERR; /* NO event with the specified ID found */
@@ -290,7 +281,7 @@ static aeTimeEvent *aeSearchNearestTimer(aeEventLoop *eventLoop)
 /* Process time events */
 static int processTimeEvents(aeEventLoop *eventLoop) {
     int processed = 0;
-    aeTimeEvent *te;
+    aeTimeEvent *te, *prev;
     PORT_LONGLONG maxId;
     time_t now = time(NULL);
 
@@ -311,12 +302,32 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
     }
     eventLoop->lastTime = now;
 
+    prev = NULL;
     te = eventLoop->timeEventHead;
     maxId = eventLoop->timeEventNextId-1;
     while(te) {
         PORT_LONG now_sec, now_ms;
         PORT_LONGLONG id;
 
+        /* Remove events scheduled for deletion. */
+        if (te->id == AE_DELETED_EVENT_ID) {
+            aeTimeEvent *next = te->next;
+            if (prev == NULL)
+                eventLoop->timeEventHead = te->next;
+            else
+                prev->next = te->next;
+            if (te->finalizerProc)
+                te->finalizerProc(eventLoop, te->clientData);
+            zfree(te);
+            te = next;
+            continue;
+        }
+
+        /* Make sure we don't process time events created by time events in
+         * this iteration. Note that this check is currently useless: we always
+         * add new timers on the head, however if we change the implementation
+         * detail, this check may be useful again: we keep it here for future
+         * defense. */
         if (te->id > maxId) {
             te = te->next;
             continue;
@@ -330,28 +341,14 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
             id = te->id;
             retval = te->timeProc(eventLoop, id, te->clientData);
             processed++;
-            /* After an event is processed our time event list may
-             * no longer be the same, so we restart from head.
-             * Still we make sure to don't process events registered
-             * by event handlers itself in order to don't loop forever.
-             * To do so we saved the max ID we want to handle.
-             *
-             * FUTURE OPTIMIZATIONS:
-             * Note that this is NOT great algorithmically. Redis uses
-             * a single time event so it's not a problem but the right
-             * way to do this is to add the new elements on head, and
-             * to flag deleted elements in a special way for later
-             * deletion (putting references to the nodes to delete into
-             * another linked list). */
             if (retval != AE_NOMORE) {
                 aeAddMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
             } else {
-                aeDeleteTimeEvent(eventLoop, id);
+                te->id = AE_DELETED_EVENT_ID;
             }
-            te = eventLoop->timeEventHead;
-        } else {
-            te = te->next;
         }
+        prev = te;
+        te = te->next;
     }
     return processed;
 }
@@ -373,7 +370,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
 
-#ifdef _WIN32	
+#ifdef _WIN32
     if (ServiceStopIssued() == TRUE) {
         aeStop(eventLoop);
     }
@@ -383,7 +380,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
     if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
 
     /* Note that we want call select() even if there are no
-     * file events to process as long as we want to process time
+     * file events to process as PORT_LONG as we want to process time
      * events, in order to sleep until the next time event is ready
      * to fire. */
     if (eventLoop->maxfd != -1 ||
@@ -397,19 +394,22 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         if (shortest) {
             PORT_LONG now_sec, now_ms;
 
-            /* Calculate the time missing for the nearest
-             * timer to fire. */
             aeGetTime(&now_sec, &now_ms);
             tvp = &tv;
-            tvp->tv_sec = (int)(shortest->when_sec - now_sec);                  WIN_PORT_FIX /* cast (int) */
-            if (shortest->when_ms < now_ms) {
-                tvp->tv_usec = (int)((shortest->when_ms+1000) - now_ms)*1000;   WIN_PORT_FIX /* cast (int) */
-                tvp->tv_sec --;
+
+            /* How many milliseconds we need to wait for the next
+             * time event to fire? */
+            PORT_LONGLONG ms =
+                (shortest->when_sec - now_sec)*1000 +
+                shortest->when_ms - now_ms;
+
+            if (ms > 0) {
+                tvp->tv_sec = ms/1000;
+                tvp->tv_usec = (ms % 1000)*1000;
             } else {
-                tvp->tv_usec = (int)(shortest->when_ms - now_ms)*1000;          WIN_PORT_FIX /* cast (int) */
+                tvp->tv_sec = 0;
+                tvp->tv_usec = 0;
             }
-            if (tvp->tv_sec < 0) tvp->tv_sec = 0;
-            if (tvp->tv_usec < 0) tvp->tv_usec = 0;
         } else {
             /* If we have to check for events but need to return
              * ASAP because of AE_DONT_WAIT we need to set the timeout

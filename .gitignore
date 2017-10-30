@@ -4,6 +4,7 @@
 dump.rdb
 redis-benchmark
 redis-check-aof
+redis-check-rdb
 redis-check-dump
 redis-cli
 redis-sentinel
@@ -48,3 +49,6 @@ msvs/BuildRelease
 msvs/Documentation
 tests/tmp/
 
+*.opendb
+*.db
+*.orig

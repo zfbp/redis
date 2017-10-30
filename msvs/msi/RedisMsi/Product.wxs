@@ -21,7 +21,7 @@
     <Product Id="*"
              Name="Redis on Windows"
              Language="1033"
-             Version="3.0.504"
+             Version="3.2.100"
              Manufacturer="MSOpenTech"
              UpgradeCode="{05410198-7212-4FC4-B7C8-AFEFC3DA0FBC}">
         <Package InstallerVersion="200"
@@ -84,7 +84,6 @@
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="ProgramFiles64Folder">
                 <Directory Id="INSTALLFOLDER" Name="Redis">
-                    <Directory Id="LogsFolder" Name="Logs" />
                 </Directory>
             </Directory>
         </Directory>

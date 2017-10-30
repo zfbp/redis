@@ -70,24 +70,27 @@
 #include <math.h>
 
 #ifdef _WIN32
-#include <fcntl.h>
 #ifndef STDIN_FILENO
-  #define STDIN_FILENO (_fileno(stdin))
+#define STDIN_FILENO (_fileno(stdin))
 #endif
+#include "Win32_Interop/win32fixes.h"
+#include "Win32_Interop/Win32_Signal_Process.h"
+#include "Win32_Interop/Win32_ANSI.h"
+#include <windows.h>
 #define strcasecmp _stricmp
 #define strncasecmp _strnicmp
 #define strtoull _strtoui64
 #endif
 
-#include "hiredis.h"
-#include "sds.h"
+#include <hiredis.h>
+#include <sds.h> /* use sds.h from hiredis, so that only one set of sds functions will be present in the binary */
 #include "zmalloc.h"
 #include "linenoise.h"
 #include "help.h"
 #include "anet.h"
 #include "ae.h"
 
-#define REDIS_NOTUSED(V) ((void) V)
+#define UNUSED(V) ((void) V)
 
 #define OUTPUT_STANDARD 0
 #define OUTPUT_RAW 1
@@ -96,6 +99,8 @@
 #define REDIS_CLI_DEFAULT_PIPE_TIMEOUT 30 /* seconds */
 #define REDIS_CLI_HISTFILE_ENV "REDISCLI_HISTFILE"
 #define REDIS_CLI_HISTFILE_DEFAULT ".rediscli_history"
+#define REDIS_CLI_RCFILE_ENV "REDISCLI_RCFILE"
+#define REDIS_CLI_RCFILE_DEFAULT ".redisclirc"
 
 /* --latency-dist palettes. */
 int spectrum_palette_color_size = 19;
@@ -144,14 +149,24 @@ static struct config {
     sds mb_delim;
     char prompt[128];
     char *eval;
+    int eval_ldb;
+    int eval_ldb_sync;  /* Ask for synchronous mode of the Lua debugger. */
+    int eval_ldb_end;   /* Lua debugging session ended. */
+    int enable_ldb_on_eval; /* Handle manual SCRIPT DEBUG + EVAL commands. */
     int last_cmd_type;
 } config;
+
+/* User preferences. */
+static struct pref {
+    int hints;
+} pref;
 
 static volatile sig_atomic_t force_cancel_loop = 0;
 static void usage(void);
 static void slaveMode(void);
 char *redisGitSHA1(void);
 char *redisGitDirty(void);
+static int cliConnect(int force);
 
 /*------------------------------------------------------------------------------
  * Utility functions
@@ -178,13 +193,13 @@ static PORT_LONGLONG mstime(void) {
 static void cliRefreshPrompt(void) {
     int len;
 
+    if (config.eval_ldb) return;
     if (config.hostsocket != NULL)
         len = snprintf(config.prompt,sizeof(config.prompt),"redis %s",
                        config.hostsocket);
     else
-        len = snprintf(config.prompt,sizeof(config.prompt),
-                       strchr(config.hostip,':') ? "[%s]:%d" : "%s:%d",
-                       config.hostip, config.hostport);
+        len = anetFormatAddr(config.prompt, sizeof(config.prompt),
+                           config.hostip, config.hostport);
     /* Add [dbnum] if needed */
     if (config.dbnum != 0 && config.last_cmd_type != REDIS_REPLY_ERROR)
         len += snprintf(config.prompt+len,sizeof(config.prompt)-len,"[%d]",
@@ -192,29 +207,35 @@ static void cliRefreshPrompt(void) {
     snprintf(config.prompt+len,sizeof(config.prompt)-len,"> ");
 }
 
-static sds getHistoryPath() {
+/* Return the name of the dotfile for the specified 'dotfilename'.
+ * Normally it just concatenates user $HOME to the file specified
+ * in 'dotfilename'. However if the environment varialbe 'envoverride'
+ * is set, its value is taken as the path.
+ *
+ * The function returns NULL (if the file is /dev/null or cannot be
+ * obtained for some error), or an SDS string that must be freed by
+ * the user. */
+static sds getDotfilePath(char *envoverride, char *dotfilename) {
     char *path = NULL;
-    sds historyPath = NULL;
+    sds dotPath = NULL;
 
-    /* check the env for a histfile override */
-    path = getenv(REDIS_CLI_HISTFILE_ENV);
+    /* Check the env for a dotfile override. */
+    path = getenv(envoverride);
     if (path != NULL && *path != '\0') {
         if (!strcmp("/dev/null", path)) {
             return NULL;
         }
 
-        /* if the env is set, return it */
-        historyPath = sdscatprintf(sdsempty(), "%s", path);
+        /* If the env is set, return it. */
+        dotPath = sdsnew(path);
     } else {
-        char *home = getenv(IF_WIN32("USERPROFILE","HOME"));
-
+        char *home = getenv("HOME");
         if (home != NULL && *home != '\0') {
-            /* otherwise, return the default */
-            historyPath = sdscatprintf(sdsempty(), IF_WIN32("%s\\%s","%s/%s"), home, REDIS_CLI_HISTFILE_DEFAULT);
+            /* If no override is set use $HOME/<dotfilename>. */
+            dotPath = sdscatprintf(sdsempty(), "%s/%s", home, dotfilename);
         }
     }
-
-    return historyPath;
+    return dotPath;
 }
 
 /*------------------------------------------------------------------------------
@@ -242,9 +263,9 @@ static sds cliVersion(void) {
     version = sdscatprintf(sdsempty(), "%s", REDIS_VERSION);
 
     /* Add git commit and working tree status when available */
-    if (strtoll(redisGitSHA1(),NULL,16)) {
+    if (strtol(redisGitSHA1(),NULL,16)) {
         version = sdscatprintf(version, " (git:%s", redisGitSHA1());
-        if (strtoll(redisGitDirty(),NULL,10))
+        if (strtol(redisGitDirty(),NULL,10))
             version = sdscatprintf(version, "-dirty");
         version = sdscat(version, ")");
     }
@@ -258,11 +279,11 @@ static void cliInitHelp(void) {
     helpEntry tmp;
 
     helpEntriesLen = len = commandslen+groupslen;
-    helpEntries = malloc(sizeof(helpEntry)*len);
+    helpEntries = zmalloc(sizeof(helpEntry)*len);
 
     for (i = 0; i < groupslen; i++) {
         tmp.argc = 1;
-        tmp.argv = malloc(sizeof(sds));
+        tmp.argv = zmalloc(sizeof(sds));
         tmp.argv[0] = sdscatprintf(sdsempty(),"@%s",commandGroups[i]);
         tmp.full = tmp.argv[0];
         tmp.type = CLI_HELP_GROUP;
@@ -279,6 +300,61 @@ static void cliInitHelp(void) {
     }
 }
 
+/* cliInitHelp() setups the helpEntries array with the command and group
+ * names from the help.h file. However the Redis instance we are connecting
+ * to may support more commands, so this function integrates the previous
+ * entries with additional entries obtained using the COMMAND command
+ * available in recent versions of Redis. */
+static void cliIntegrateHelp(void) {
+    if (cliConnect(0) == REDIS_ERR) return;
+
+    redisReply *reply = redisCommand(context, "COMMAND");
+    if(reply == NULL || reply->type != REDIS_REPLY_ARRAY) return;
+
+    /* Scan the array reported by COMMAND and fill only the entries that
+     * don't already match what we have. */
+    for (size_t j = 0; j < reply->elements; j++) {
+        redisReply *entry = reply->element[j];
+        char *cmdname = entry->element[0]->str;
+        int i;
+
+        for (i = 0; i < helpEntriesLen; i++) {
+            helpEntry *he = helpEntries+i;
+            if (!strcasecmp(he->argv[0],cmdname))
+                break;
+        }
+        if (i != helpEntriesLen) continue;
+
+        helpEntriesLen++;
+        helpEntries = zrealloc(helpEntries,sizeof(helpEntry)*helpEntriesLen);
+        helpEntry *new = helpEntries+(helpEntriesLen-1);
+
+        new->argc = 1;
+        new->argv = zmalloc(sizeof(sds));
+        new->argv[0] = sdsnew(cmdname);
+        new->full = new->argv[0];
+        new->type = CLI_HELP_COMMAND;
+        sdstoupper(new->argv[0]);
+
+        struct commandHelp *ch = zmalloc(sizeof(*ch));
+        ch->name = new->argv[0];
+        ch->params = sdsempty();
+        int args = llabs(entry->element[1]->integer);
+        if (entry->element[3]->integer == 1) {
+            ch->params = sdscat(ch->params,"key ");
+            args--;
+        }
+        while(args--) ch->params = sdscat(ch->params,"arg ");
+        if (entry->element[1]->integer < 0)
+            ch->params = sdscat(ch->params,"...options...");
+        ch->summary = "Help not available";
+        ch->group = 0;
+        ch->since = "not known";
+        new->org = ch;
+    }
+    freeReplyObject(reply);
+}
+
 /* Output command help to stdout. */
 static void cliOutputCommandHelp(struct commandHelp *help, int group) {
     printf("\r\n  \x1b[1m%s\x1b[0m \x1b[90m%s\x1b[0m\r\n", help->name, help->params);
@@ -293,11 +369,17 @@ static void cliOutputCommandHelp(struct commandHelp *help, int group) {
 static void cliOutputGenericHelp(void) {
     sds version = cliVersion();
     printf(
-        "redis-cli %s\r\n"
-        "Type: \"help @<group>\" to get a list of commands in <group>\r\n"
-        "      \"help <command>\" for help on <command>\r\n"
-        "      \"help <tab>\" to get a list of possible help topics\r\n"
-        "      \"quit\" to exit\r\n",
+        "redis-cli %s\n"
+        "To get help about Redis commands type:\n"
+        "      \"help @<group>\" to get a list of commands in <group>\n"
+        "      \"help <command>\" for help on <command>\n"
+        "      \"help <tab>\" to get a list of possible help topics\n"
+        "      \"quit\" to exit\n"
+        "\n"
+        "To set redis-cli perferences:\n"
+        "      \":set hints\" enable online hints\n"
+        "      \":set nohints\" disable online hints\n"
+        "Set your preferences in ~/.redisclirc\n",
         version
     );
     sdsfree(version);
@@ -348,6 +430,7 @@ static void cliOutputHelp(int argc, char **argv) {
     printf("\r\n");
 }
 
+/* Linenoise completion callback. */
 static void completionCallback(const char *buf, linenoiseCompletions *lc) {
     size_t startpos = 0;
     int mask;
@@ -374,6 +457,58 @@ static void completionCallback(const char *buf, linenoiseCompletions *lc) {
             sdsfree(tmp);
         }
     }
+}
+
+/* Linenoise hints callback. */
+static char *hintsCallback(const char *buf, int *color, int *bold) {
+    if (!pref.hints) return NULL;
+
+    int i, argc, buflen = (int)strlen(buf);                                     WIN_PORT_FIX /* cast int */
+    sds *argv = sdssplitargs(buf,&argc);
+    int endspace = buflen && isspace(buf[buflen-1]);
+
+    /* Check if the argument list is empty and return ASAP. */
+    if (argc == 0) {
+        sdsfreesplitres(argv,argc);
+        return NULL;
+    }
+
+    for (i = 0; i < helpEntriesLen; i++) {
+        if (!(helpEntries[i].type & CLI_HELP_COMMAND)) continue;
+
+        if (strcasecmp(argv[0],helpEntries[i].full) == 0)
+        {
+            *color = 90;
+            *bold = 0;
+            sds hint = sdsnew(helpEntries[i].org->params);
+
+            /* Remove arguments from the returned hint to show only the
+             * ones the user did not yet typed. */
+            int toremove = argc-1;
+            while(toremove > 0 && sdslen(hint)) {
+                if (hint[0] == '[') break;
+                if (hint[0] == ' ') toremove--;
+                sdsrange(hint,1,-1);
+            }
+
+            /* Add an initial space if needed. */
+            if (!endspace) {
+                sds newhint = sdsnewlen(" ",1);
+                newhint = sdscatsds(newhint,hint);
+                sdsfree(hint);
+                hint = newhint;
+            }
+
+            sdsfreesplitres(argv,argc);
+            return hint;
+        }
+    }
+    sdsfreesplitres(argv,argc);
+    return NULL;
+}
+
+static void freeHintsCallback(void *ptr) {
+    sdsfree(ptr);
 }
 
 /*------------------------------------------------------------------------------
@@ -412,8 +547,9 @@ static int cliSelect(void) {
  * even if there is already a connected socket. */
 static int cliConnect(int force) {
     if (context == NULL || force) {
-        if (context != NULL)
+        if (context != NULL) {
             redisFree(context);
+        }
 
         if (config.hostsocket == NULL) {
             context = redisConnect(config.hostip,config.hostport);
@@ -433,7 +569,7 @@ static int cliConnect(int force) {
         }
 
         /* Set aggressive KEEP_ALIVE socket option in the Redis context socket
-         * in order to prevent timeouts caused by the execution of long
+         * in order to prevent timeouts caused by the execution of PORT_LONG
          * commands. At the same time this improves the detection of real
          * errors. */
         anetKeepAlive(NULL, context->fd, REDIS_CLI_KEEPALIVE_INTERVAL);
@@ -497,7 +633,7 @@ static sds cliFormatReplyTTY(redisReply *r, char *prefix) {
             _prefix = sdscat(sdsnew(prefix),_prefixlen);
 
             /* Setup prefix format for every entry */
-            snprintf(_prefixfmt,sizeof(_prefixfmt),"%%s%%%dd) ",idxlen);
+            snprintf(_prefixfmt,sizeof(_prefixfmt),"%%s%%%ud) ",idxlen);
 
             for (i = 0; i < r->elements; i++) {
                 /* Don't use the prefix for the first element, as the parent
@@ -519,6 +655,51 @@ static sds cliFormatReplyTTY(redisReply *r, char *prefix) {
     return out;
 }
 
+int isColorTerm(void) {
+    char *t = getenv("TERM");
+    return t != NULL && strstr(t,"xterm") != NULL;
+}
+
+/* Helpe  function for sdsCatColorizedLdbReply() appending colorize strings
+ * to an SDS string. */
+sds sdscatcolor(sds o, char *s, size_t len, char *color) {
+    if (!isColorTerm()) return sdscatlen(o,s,len);
+
+    int bold = strstr(color,"bold") != NULL;
+    int ccode = 37; /* Defaults to white. */
+    if (strstr(color,"red")) ccode = 31;
+    else if (strstr(color,"red")) ccode = 31;
+    else if (strstr(color,"green")) ccode = 32;
+    else if (strstr(color,"yellow")) ccode = 33;
+    else if (strstr(color,"blue")) ccode = 34;
+    else if (strstr(color,"magenta")) ccode = 35;
+    else if (strstr(color,"cyan")) ccode = 36;
+    else if (strstr(color,"white")) ccode = 37;
+
+    o = sdscatfmt(o,"\033[%i;%i;49m",bold,ccode);
+    o = sdscatlen(o,s,len);
+    o = sdscat(o,"\033[0m");
+    return o;
+}
+
+/* Colorize Lua debugger status replies according to the prefix they
+ * have. */
+sds sdsCatColorizedLdbReply(sds o, char *s, size_t len) {
+    char *color = "white";
+
+    if (strstr(s,"<debug>")) color = "bold";
+    if (strstr(s,"<redis>")) color = "green";
+    if (strstr(s,"<reply>")) color = "cyan";
+    if (strstr(s,"<error>")) color = "red";
+    if (strstr(s,"<hint>")) color = "bold";
+    if (strstr(s,"<value>") || strstr(s,"<retval>")) color = "magenta";
+    if (len > 4 && isdigit(s[3])) {
+        if (s[1] == '>') color = "yellow"; /* Current line. */
+        else if (s[2] == '#') color = "bold"; /* Break point. */
+    }
+    return sdscatcolor(o,s,len,color);
+}
+
 static sds cliFormatReplyRaw(redisReply *r) {
     sds out = sdsempty(), tmp;
     size_t i;
@@ -533,7 +714,24 @@ static sds cliFormatReplyRaw(redisReply *r) {
         break;
     case REDIS_REPLY_STATUS:
     case REDIS_REPLY_STRING:
-        out = sdscatlen(out,r->str,r->len);
+        if (r->type == REDIS_REPLY_STATUS && config.eval_ldb) {
+            /* The Lua debugger replies with arrays of simple (status)
+             * strings. We colorize the output for more fun if this
+             * is a debugging session. */
+
+            /* Detect the end of a debugging session. */
+            if (strstr(r->str,"<endsession>") == r->str) {
+                config.enable_ldb_on_eval = 0;
+                config.eval_ldb = 0;
+                config.eval_ldb_end = 1; /* Signal the caller session ended. */
+                config.output = OUTPUT_STANDARD;
+                cliRefreshPrompt();
+            } else {
+                out = sdsCatColorizedLdbReply(out,r->str,r->len);
+            }
+        } else {
+            out = sdscatlen(out,r->str,r->len);
+        }
         break;
     case REDIS_REPLY_INTEGER:
         out = sdscatprintf(out,"%lld",r->integer);
@@ -636,7 +834,7 @@ static int cliReadReply(int output_raw_strings) {
         p = strchr(s+1,' ');    /* MOVED[S]3999[P]127.0.0.1:6381 */
         *p = '\0';
         slot = atoi(s+1);
-        s = strchr(p+1,':');    /* MOVED 3999[P]127.0.0.1[S]6381 */
+        s = strrchr(p+1,':');    /* MOVED 3999[P]127.0.0.1[S]6381 */
         *s = '\0';
         sdsfree(config.hostip);
         config.hostip = sdsnew(p+1);
@@ -679,7 +877,8 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
     size_t *argvlen;
     int j, output_raw;
 
-    if (!strcasecmp(command,"help") || !strcasecmp(command,"?")) {
+    if (!config.eval_ldb && /* In debugging mode, let's pass "help" to Redis. */
+        (!strcasecmp(command,"help") || !strcasecmp(command,"?"))) {
         cliOutputHelp(--argc, ++argv);
         return REDIS_OK;
     }
@@ -688,6 +887,9 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
 
     output_raw = 0;
     if (!strcasecmp(command,"info") ||
+        (argc >= 2 && !strcasecmp(command,"debug") &&
+                      ((!strcasecmp(argv[1],"jemalloc") && !strcasecmp(argv[2],"info")) ||
+                       !strcasecmp(argv[1],"htstats"))) ||
         (argc == 2 && !strcasecmp(command,"cluster") &&
                       (!strcasecmp(argv[1],"nodes") ||
                        !strcasecmp(argv[1],"info"))) ||
@@ -708,8 +910,26 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
     if (!strcasecmp(command,"sync") ||
         !strcasecmp(command,"psync")) config.slave_mode = 1;
 
+    /* When the user manually calls SCRIPT DEBUG, setup the activation of
+     * debugging mode on the next eval if needed. */
+    if (argc == 3 && !strcasecmp(argv[0],"script") &&
+                     !strcasecmp(argv[1],"debug"))
+    {
+        if (!strcasecmp(argv[2],"yes") || !strcasecmp(argv[2],"sync")) {
+            config.enable_ldb_on_eval = 1;
+        } else {
+            config.enable_ldb_on_eval = 0;
+        }
+    }
+
+    /* Actually activate LDB on EVAL if needed. */
+    if (!strcasecmp(command,"eval") && config.enable_ldb_on_eval) {
+        config.eval_ldb = 1;
+        config.output = OUTPUT_RAW;
+    }
+
     /* Setup argument length */
-    argvlen = malloc(argc*sizeof(size_t));
+    argvlen = zmalloc(argc*sizeof(size_t));
     for (j = 0; j < argc; j++)
         argvlen[j] = sdslen(argv[j]);
 
@@ -732,16 +952,16 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
             printf("Entering slave output mode...  (press Ctrl-C to quit)\n");
             slaveMode();
             config.slave_mode = 0;
-            free(argvlen);
+            zfree(argvlen);
             return REDIS_ERR;  /* Error = slaveMode lost connection to master */
         }
 
         if (cliReadReply(output_raw) != REDIS_OK) {
-            free(argvlen);
+            zfree(argvlen);
             return REDIS_ERR;
         } else {
             /* Store database number when SELECT was successfully executed. */
-            if (!strcasecmp(command,"select") && argc == 2) {
+            if (!strcasecmp(command,"select") && argc == 2 && config.last_cmd_type != REDIS_REPLY_ERROR) {
                 config.dbnum = atoi(argv[1]);
                 cliRefreshPrompt();
             } else if (!strcasecmp(command,"auth") && argc == 2) {
@@ -752,7 +972,7 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
         fflush(stdout); /* Make it grep friendly */
     }
 
-    free(argvlen);
+    zfree(argvlen);
     return REDIS_OK;
 }
 
@@ -814,10 +1034,10 @@ static int parseOptions(int argc, char **argv) {
         } else if (!strcmp(argv[i],"-s") && !lastarg) {
             config.hostsocket = argv[++i];
         } else if (!strcmp(argv[i],"-r") && !lastarg) {
-            config.repeat = (PORT_LONG) strtoll(argv[++i], NULL, 10);
+            config.repeat = (PORT_LONG) strtol(argv[++i],NULL,10);
         } else if (!strcmp(argv[i],"-i") && !lastarg) {
             double seconds = atof(argv[++i]);
-            config.interval = (PORT_LONG) (seconds * 1000000);
+            config.interval = (PORT_LONG) (seconds*1000000);
         } else if (!strcmp(argv[i],"-n") && !lastarg) {
             config.dbnum = atoi(argv[++i]);
         } else if (!strcmp(argv[i],"-a") && !lastarg) {
@@ -840,7 +1060,7 @@ static int parseOptions(int argc, char **argv) {
             config.latency_history = 1;
         } else if (!strcmp(argv[i],"--lru-test") && !lastarg) {
             config.lru_test_mode = 1;
-            config.lru_test_sample_size = strtoll(argv[++i],NULL,10);
+            config.lru_test_sample_size = strtol(argv[++i],NULL,10);
         } else if (!strcmp(argv[i],"--slave")) {
             config.slave_mode = 1;
         } else if (!strcmp(argv[i],"--stat")) {
@@ -863,6 +1083,13 @@ static int parseOptions(int argc, char **argv) {
             config.bigkeys = 1;
         } else if (!strcmp(argv[i],"--eval") && !lastarg) {
             config.eval = argv[++i];
+        } else if (!strcmp(argv[i],"--ldb")) {
+            config.eval_ldb = 1;
+            config.output = OUTPUT_RAW;
+        } else if (!strcmp(argv[i],"--ldb-sync-mode")) {
+            config.eval_ldb = 1;
+            config.eval_ldb_sync = 1;
+            config.output = OUTPUT_RAW;
         } else if (!strcmp(argv[i],"-c")) {
             config.cluster_mode = 1;
         } else if (!strcmp(argv[i],"-d") && !lastarg) {
@@ -884,6 +1111,13 @@ static int parseOptions(int argc, char **argv) {
                 break;
             }
         }
+    }
+
+    /* --ldb requires --eval. */
+    if (config.eval_ldb && config.eval == NULL) {
+        fprintf(stderr,"Options --ldb and --ldb-sync-mode require --eval.\n");
+        fprintf(stderr,"Try %s --help for more information.\n", argv[0]);
+        exit(1);
     }
     return i;
 }
@@ -945,6 +1179,10 @@ static void usage(void) {
 "  --intrinsic-latency <sec> Run a test to measure intrinsic system latency.\n"
 "                     The test will run for the specified amount of seconds.\n"
 "  --eval <file>      Send an EVAL command using the Lua script at <file>.\n"
+"  --ldb              Used with --eval enable the Redis Lua debugger.\n"
+"  --ldb-sync-mode    Like --ldb but uses the synchronous Lua debugger, in\n"
+"                     this mode the server is blocked and script changes are\n"
+"                     are not rolled back from the server memory.\n"
 "  --help             Output this help and exit.\n"
 "  --version          Output version and exit.\n"
 "\n"
@@ -959,7 +1197,8 @@ static void usage(void) {
 "  (Note: when using --eval the comma separates KEYS[] from ARGV[] items)\n"
 "\n"
 "When no command is given, redis-cli starts in interactive mode.\n"
-"Type \"help\" in interactive mode for information on available commands.\n"
+"Type \"help\" in interactive mode for information on available commands\n"
+"and settings.\n"
 "\n",
         version, REDIS_CLI_DEFAULT_PIPE_TIMEOUT);
     sdsfree(version);
@@ -1004,6 +1243,68 @@ static int issueCommand(int argc, char **argv) {
     return issueCommandRepeat(argc, argv, config.repeat);
 }
 
+/* Split the user provided command into multiple SDS arguments.
+ * This function normally uses sdssplitargs() from sds.c which is able
+ * to understand "quoted strings", escapes and so forth. However when
+ * we are in Lua debugging mode and the "eval" command is used, we want
+ * the remaining Lua script (after "e " or "eval ") to be passed verbatim
+ * as a single big argument. */
+static sds *cliSplitArgs(char *line, int *argc) {
+    if (config.eval_ldb && (strstr(line,"eval ") == line ||
+                            strstr(line,"e ") == line))
+    {
+        sds *argv = sds_malloc(sizeof(sds)*2);
+        *argc = 2;
+        int len = (int)strlen(line);                                            WIN_PORT_FIX /* cast int */
+        int elen = line[1] == ' ' ? 2 : 5; /* "e " or "eval "? */
+        argv[0] = sdsnewlen(line,elen-1);
+        argv[1] = sdsnewlen(line+elen,len-elen);
+        return argv;
+    } else {
+        return sdssplitargs(line,argc);
+    }
+}
+
+/* Set the CLI perferences. This function is invoked when an interactive
+ * ":command" is called, or when reading ~/.redisclirc file, in order to
+ * set user preferences. */
+void cliSetPreferences(char **argv, int argc, int interactive) {
+    if (!strcasecmp(argv[0],":set") && argc >= 2) {
+        if (!strcasecmp(argv[1],"hints")) pref.hints = 1;
+        else if (!strcasecmp(argv[1],"nohints")) pref.hints = 0;
+        else {
+            printf("%sunknown redis-cli preference '%s'\n",
+                interactive ? "" : ".redisclirc: ",
+                argv[1]);
+        }
+    } else {
+        printf("%sunknown redis-cli internal command '%s'\n",
+            interactive ? "" : ".redisclirc: ",
+            argv[0]);
+    }
+}
+
+/* Load the ~/.redisclirc file if any. */
+void cliLoadPreferences(void) {
+    sds rcfile = getDotfilePath(REDIS_CLI_RCFILE_ENV,REDIS_CLI_RCFILE_DEFAULT);
+    if (rcfile == NULL) return;
+    FILE *fp = fopen(rcfile,"r");
+    char buf[1024];
+
+    if (fp) {
+        while(fgets(buf,sizeof(buf),fp) != NULL) {
+            sds *argv;
+            int argc;
+
+            argv = sdssplitargs(buf,&argc);
+            if (argc > 0) cliSetPreferences(argv,argc,0);
+            sdsfreesplitres(argv,argc);
+        }
+        fclose(fp);
+    }
+    sdsfree(rcfile);
+}
+
 static void repl(void) {
     sds historyfile = NULL;
     int history = 0;
@@ -1014,32 +1315,46 @@ static void repl(void) {
     config.interactive = 1;
     linenoiseSetMultiLine(1);
     linenoiseSetCompletionCallback(completionCallback);
+    linenoiseSetHintsCallback(hintsCallback);
+    linenoiseSetFreeHintsCallback(freeHintsCallback);
 
-    /* Only use history when stdin is a tty. */
+    /* Only use history and load the rc file when stdin is a tty. */
     if (isatty(fileno(stdin))) {
-        historyfile = getHistoryPath();
+        historyfile = getDotfilePath(REDIS_CLI_HISTFILE_ENV,REDIS_CLI_HISTFILE_DEFAULT);
         if (historyfile != NULL) {
             history = 1;
             linenoiseHistoryLoad(historyfile);
         }
+        cliLoadPreferences();
     }
 
     cliRefreshPrompt();
     while((line = linenoise(context ? config.prompt : "not connected> ")) != NULL) {
         if (line[0] != '\0') {
-            argv = sdssplitargs(line,&argc);
+            argv = cliSplitArgs(line,&argc);
             if (history) linenoiseHistoryAdd(line);
             if (historyfile) linenoiseHistorySave(historyfile);
 
             if (argv == NULL) {
                 printf("Invalid argument(s)\n");
-                free(line);
+                linenoiseFree(line);
                 continue;
             } else if (argc > 0) {
                 if (strcasecmp(argv[0],"quit") == 0 ||
                     strcasecmp(argv[0],"exit") == 0)
                 {
                     exit(0);
+                } else if (argv[0][0] == ':') {
+                    cliSetPreferences(argv,argc,1);
+                    continue;
+                } else if (strcasecmp(argv[0],"restart") == 0) {
+                    if (config.eval) {
+                        config.eval_ldb = 1;
+                        config.output = OUTPUT_RAW;
+                        return; /* Return to evalMode to restart the session. */
+                    } else {
+                        printf("Use 'restart' only in Lua debugging mode.");
+                    }
                 } else if (argc == 3 && !strcasecmp(argv[0],"connect")) {
                     sdsfree(config.hostip);
                     config.hostip = sdsnew(argv[1]);
@@ -1061,6 +1376,16 @@ static void repl(void) {
 
                     issueCommandRepeat(argc-skipargs, argv+skipargs, repeat);
 
+                    /* If our debugging session ended, show the EVAL final
+                     * reply. */
+                    if (config.eval_ldb_end) {
+                        config.eval_ldb_end = 0;
+                        cliReadReply(0);
+                        printf("\n(Lua debugging session ended%s)\n\n",
+                            config.eval_ldb_sync ? "" :
+                            " -- dataset changes rolled back");
+                    }
+
                     elapsed = mstime()-start_time;
                     if (elapsed >= 500) {
                         printf("(%.2fs)\n",(double)elapsed/1000);
@@ -1071,7 +1396,7 @@ static void repl(void) {
             sdsfreesplitres(argv,argc);
         }
         /* linenoise() returns malloc-ed lines like readline() */
-        free(line);
+        linenoiseFree(line);
     }
     exit(0);
 }
@@ -1093,41 +1418,86 @@ static int noninteractive(int argc, char **argv) {
  *--------------------------------------------------------------------------- */
 
 static int evalMode(int argc, char **argv) {
-    sds script = sdsempty();
+    sds script = NULL;
     FILE *fp;
     char buf[1024];
     size_t nread;
     char **argv2;
-    int j, got_comma = 0, keys = 0;
+    int j, got_comma, keys;
+    int retval = REDIS_OK;
 
-    /* Load the script from the file, as an sds string. */
-    fp = fopen(config.eval,"r");
-    if (!fp) {
-        fprintf(stderr,
-            "Can't open file '%s': %s\n", config.eval, strerror(errno));
-        exit(1);
-    }
-    while((nread = fread(buf,1,sizeof(buf),fp)) != 0) {
-        script = sdscatlen(script,buf,nread);
-    }
-    fclose(fp);
-
-    /* Create our argument vector */
-    argv2 = zmalloc(sizeof(sds)*(argc+3));
-    argv2[0] = sdsnew("EVAL");
-    argv2[1] = script;
-    for (j = 0; j < argc; j++) {
-        if (!got_comma && argv[j][0] == ',' && argv[j][1] == 0) {
-            got_comma = 1;
-            continue;
+    while(1) {
+        if (config.eval_ldb) {
+            printf(
+            "Lua debugging session started, please use:\n"
+            "quit    -- End the session.\n"
+            "restart -- Restart the script in debug mode again.\n"
+            "help    -- Show Lua script debugging commands.\n\n"
+            );
         }
-        argv2[j+3-got_comma] = sdsnew(argv[j]);
-        if (!got_comma) keys++;
-    }
-    argv2[2] = sdscatprintf(sdsempty(),"%d",keys);
 
-    /* Call it */
-    return issueCommand(argc+3-got_comma, argv2);
+        sdsfree(script);
+        script = sdsempty();
+        got_comma = 0;
+        keys = 0;
+
+        /* Load the script from the file, as an sds string. */
+        fp = fopen(config.eval,"r");
+        if (!fp) {
+            fprintf(stderr,
+                "Can't open file '%s': %s\n", config.eval, strerror(errno));
+            exit(1);
+        }
+        while((nread = fread(buf,1,sizeof(buf),fp)) != 0) {
+            script = sdscatlen(script,buf,nread);
+        }
+        fclose(fp);
+
+        /* If we are debugging a script, enable the Lua debugger. */
+        if (config.eval_ldb) {
+            redisReply *reply = redisCommand(context,
+                    config.eval_ldb_sync ?
+                    "SCRIPT DEBUG sync": "SCRIPT DEBUG yes");
+            if (reply) freeReplyObject(reply);
+        }
+
+        /* Create our argument vector */
+        argv2 = zmalloc(sizeof(sds)*(argc+3));
+        argv2[0] = sdsnew("EVAL");
+        argv2[1] = script;
+        for (j = 0; j < argc; j++) {
+            if (!got_comma && argv[j][0] == ',' && argv[j][1] == 0) {
+                got_comma = 1;
+                continue;
+            }
+            argv2[j+3-got_comma] = sdsnew(argv[j]);
+            if (!got_comma) keys++;
+        }
+        argv2[2] = sdscatprintf(sdsempty(),"%d",keys);
+
+        /* Call it */
+        int eval_ldb = config.eval_ldb; /* Save it, may be reverteed. */
+        retval = issueCommand(argc+3-got_comma, argv2);
+        if (eval_ldb) {
+            if (!config.eval_ldb) {
+                /* If the debugging session ended immediately, there was an
+                 * error compiling the script. Show it and don't enter
+                 * the REPL at all. */
+                printf("Eval debugging session can't start:\n");
+                cliReadReply(0);
+                break; /* Return to the caller. */
+            } else {
+                strncpy(config.prompt,"lua debugger> ",sizeof(config.prompt));
+                repl();
+                /* Restart the session if repl() returned. */
+                cliConnect(1);
+                printf("\n");
+            }
+        } else {
+            break; /* Return to the caller. */
+        }
+    }
+    return retval;
 }
 
 /*------------------------------------------------------------------------------
@@ -1458,7 +1828,7 @@ static void pipeMode(void) {
     setmode(STDIN_FILENO,_O_BINARY);
 #endif
 
-    srand((unsigned int)time(NULL));
+    srand((unsigned int)time(NULL));                                            WIN_PORT_FIX /* cast unsigned int */
 
     /* Use non blocking I/O. */
     if (anetNonBlock(aneterr,fd) == ANET_ERR) {
@@ -1896,21 +2266,21 @@ static char *getInfoField(char *info, char *field) {
     n1 = strchr(p,'\r');
     n2 = strchr(p,',');
     if (n2 && n2 < n1) n1 = n2;
-    result = malloc(sizeof(char)*(n1-p)+1);
+    result = zmalloc(sizeof(char)*(n1-p)+1);
     memcpy(result,p,(n1-p));
     result[n1-p] = '\0';
     return result;
 }
 
 /* Like the above function but automatically convert the result into
- * a long. On error (missing field) LONG_MIN is returned. */
+ * a PORT_LONG. On error (missing field) LONG_MIN is returned. */
 static PORT_LONG getLongInfoField(char *info, char *field) {
     char *value = getInfoField(info,field);
     PORT_LONG l;
 
     if (!value) return PORT_LONG_MIN;
     l = strtol(value,NULL,10);
-    free(value);
+    zfree(value);
     return l;
 }
 
@@ -1926,7 +2296,7 @@ void bytesToHuman(char *s, PORT_LONGLONG n) {
     }
     if (n < 1024) {
         /* Bytes */
-        sprintf(s,"%lluB",n);
+        sprintf(s,"%lldB",n);
         return;
     } else if (n < (1024*1024)) {
         d = (double)n/(1024);
@@ -2179,7 +2549,7 @@ PORT_ULONG compute_something_fast(void) {
 }
 
 static void intrinsicLatencyModeStop(int s) {
-    REDIS_NOTUSED(s);
+    UNUSED(s);
     force_cancel_loop = 1;
 }
 
@@ -2207,7 +2577,7 @@ static void intrinsicLatencyMode(void) {
         }
 
         double avg_us = (double)run_time/runs;
-        double avg_ns = avg_us * 10e3;
+        double avg_ns = avg_us * 1e3;
         if (force_cancel_loop || end > test_end) {
             printf("\n%lld total runs "
                 "(avg latency: "
@@ -2256,7 +2626,13 @@ int main(int argc, char **argv) {
     config.stdinarg = 0;
     config.auth = NULL;
     config.eval = NULL;
+    config.eval_ldb = 0;
+    config.eval_ldb_end = 0;
+    config.eval_ldb_sync = 0;
+    config.enable_ldb_on_eval = 0;
     config.last_cmd_type = -1;
+
+    pref.hints = 1;
 
     spectrum_palette = spectrum_palette_color;
     spectrum_palette_size = spectrum_palette_color_size;
@@ -2266,11 +2642,15 @@ int main(int argc, char **argv) {
     else
         config.output = OUTPUT_STANDARD;
     config.mb_delim = sdsnew("\n");
-    cliInitHelp();
 
     firstarg = parseOptions(argc,argv);
     argc -= firstarg;
     argv += firstarg;
+
+    /* Initialize the help and, if possible, use the COMMAND command in order
+     * to retrieve missing entries. */
+    cliInitHelp();
+    cliIntegrateHelp();
 
     /* Latency mode */
     if (config.latency_mode) {

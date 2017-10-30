@@ -23,9 +23,6 @@
                 <File Source="$(var.BinDir)redis-check-aof.pdb" />
             </Component>
 
-            <Component Id="cmp_redis_check_dumpPDB" Guid="*">
-                <File Source="$(var.BinDir)redis-check-dump.pdb" />
-            </Component>
         </ComponentGroup>
     </Fragment>
 </Wix>

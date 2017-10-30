@@ -71,6 +71,11 @@
 #define HAVE_BACKTRACE 1
 #endif
 
+/* MSG_NOSIGNAL. */
+#ifdef __linux__
+#define HAVE_MSG_NOSIGNAL 1
+#endif
+
 /* Test for polling API */
 #ifdef __linux__
 #define HAVE_EPOLL 1
@@ -140,7 +145,7 @@ void setproctitle(const char *fmt, ...);
 #else
 #define	LITTLE_ENDIAN	1234	/* least-significant byte first (vax, pc) */
 #define	BIG_ENDIAN	4321	/* most-significant byte first (IBM, net) */
-#define	PDP_ENDIAN	3412	/* LSB first in word, MSW first in long (pdp)*/
+#define	PDP_ENDIAN	3412	/* LSB first in word, MSW first in PORT_LONG (pdp)*/
 
 #if defined(__i386__) || defined(__x86_64__) || defined(__amd64__) || \
    defined(vax) || defined(ns32000) || defined(sun386) || \
@@ -208,6 +213,7 @@ void setproctitle(const char *fmt, ...);
 #if (defined(__GLIBC__) && defined(__GLIBC_PREREQ))
 #if (GNUC_VERSION >= 40100 && __GLIBC_PREREQ(2, 6))
 #define HAVE_ATOMIC
+#endif
 #endif
 #endif
 #endif

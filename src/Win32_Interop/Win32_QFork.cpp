@@ -242,8 +242,8 @@ bool ReportSpecialSystemErrors(int error) {
         case ERROR_NO_SYSTEM_RESOURCES:
         case ERROR_COMMITMENT_LIMIT:
         {
-            redisLog(
-                REDIS_WARNING,
+            serverLog(
+                LL_WARNING,
                 "\n"
                 "The Windows version of Redis reserves heap memory from the system paging file\n"
                 "for sharing with the forked process used for persistence operations."
@@ -381,12 +381,12 @@ BOOL QForkChildInit(HANDLE QForkControlMemoryMapHandle, DWORD ParentProcessID) {
     catch(system_error syserr) {
         if (ReportSpecialSystemErrors(syserr.code().value()) == false) {
             RedisEventLog().LogError("QForkChildInit: system error. " + string(syserr.what()));
-            redisLog(REDIS_WARNING, "QForkChildInit: system error caught. error code=0x%08x, message=%s\n", syserr.code().value(), syserr.what());
+            serverLog(LL_WARNING, "QForkChildInit: system error caught. error code=0x%08x, message=%s\n", syserr.code().value(), syserr.what());
         }
     }
     catch(runtime_error runerr) {
         RedisEventLog().LogError("QForkChildInit: runtime error. " + string(runerr.what()));
-        redisLog(REDIS_WARNING, "QForkChildInit: runtime error caught. message=%s\n", runerr.what());
+        serverLog(LL_WARNING, "QForkChildInit: runtime error caught. message=%s\n", runerr.what());
     }
     
     if (g_pQForkControl != NULL) {
@@ -484,16 +484,16 @@ BOOL QForkParentInit() {
     catch(system_error syserr) {
         if (ReportSpecialSystemErrors(syserr.code().value()) == false) {
             RedisEventLog().LogError("QForkParentInit: system error. " + string(syserr.what()));
-            redisLog(REDIS_WARNING, "QForkParentInit: system error caught. error code=0x%08x, message=%s\n", syserr.code().value(), syserr.what());
+            serverLog(LL_WARNING, "QForkParentInit: system error caught. error code=0x%08x, message=%s\n", syserr.code().value(), syserr.what());
         }
     }
     catch(runtime_error runerr) {
         RedisEventLog().LogError("QForkParentInit: runtime error. " + string(runerr.what()));
-        redisLog(REDIS_WARNING, "QForkParentInit: runtime error caught. message=%s\n", runerr.what());
+        serverLog(LL_WARNING, "QForkParentInit: runtime error caught. message=%s\n", runerr.what());
     }
     catch (exception ex) {
         RedisEventLog().LogError("QForkParentInit: an exception occurred. " + string(ex.what()));
-        redisLog(REDIS_WARNING, "QForkParentInit: other exception caught.\n");
+        serverLog(LL_WARNING, "QForkParentInit: other exception caught.\n");
     }
     return FALSE;
 }
@@ -502,8 +502,8 @@ StartupStatus QForkStartup() {
     PERFORMANCE_INFORMATION perfinfo;
     perfinfo.cb = sizeof(PERFORMANCE_INFORMATION);
     if (FALSE == GetPerformanceInfo(&perfinfo, sizeof(PERFORMANCE_INFORMATION))) {
-        redisLog(REDIS_WARNING, "GetPerformanceInfo failed.\n");
-        redisLog(REDIS_WARNING, "Failing startup.\n");
+        serverLog(LL_WARNING, "GetPerformanceInfo failed.\n");
+        serverLog(LL_WARNING, "Failing startup.\n");
         return StartupStatus::ssFAILED;
     }
     Globals::pageSize = perfinfo.PageSize;
@@ -656,13 +656,13 @@ pid_t BeginForkOperation(OperationType type,
         return pi.dwProcessId;
     }
     catch(system_error syserr) {
-        redisLog(REDIS_WARNING, "BeginForkOperation: system error caught. error code=0x%08x, message=%s\n", syserr.code().value(), syserr.what());
+        serverLog(LL_WARNING, "BeginForkOperation: system error caught. error code=0x%08x, message=%s\n", syserr.code().value(), syserr.what());
     }
     catch(runtime_error runerr) {
-        redisLog(REDIS_WARNING, "BeginForkOperation: runtime error caught. message=%s\n", runerr.what());
+        serverLog(LL_WARNING, "BeginForkOperation: runtime error caught. message=%s\n", runerr.what());
     }
     catch(...) {
-        redisLog(REDIS_WARNING, "BeginForkOperation: other exception caught.\n");
+        serverLog(LL_WARNING, "BeginForkOperation: other exception caught.\n");
     }
     if (pi.hProcess != INVALID_HANDLE_VALUE) {
         TerminateProcess(pi.hProcess, 1);
@@ -775,12 +775,12 @@ BOOL AbortForkOperation() {
         return EndForkOperation(NULL);
     }
     catch(system_error syserr) {
-        redisLog(REDIS_WARNING, "AbortForkOperation: 0x%08x - %s\n", syserr.code().value(), syserr.what());
+        serverLog(LL_WARNING, "AbortForkOperation: 0x%08x - %s\n", syserr.code().value(), syserr.what());
         // If we can not properly restore fork state, then another fork operation is not possible. 
         exit(1);
     }
     catch(exception ex) {
-        redisLog(REDIS_WARNING, "AbortForkOperation: %s\n", ex.what());
+        serverLog(LL_WARNING, "AbortForkOperation: %s\n", ex.what());
         exit(1);
     }
     return FALSE;
@@ -869,13 +869,13 @@ BOOL EndForkOperation(int * pExitCode) {
         return TRUE;
     }
     catch (system_error syserr) {
-        redisLog(REDIS_WARNING, "EndForkOperation: 0x%08x - %s\n", syserr.code().value(), syserr.what());
+        serverLog(LL_WARNING, "EndForkOperation: 0x%08x - %s\n", syserr.code().value(), syserr.what());
 
         // If we can not properly restore fork state, then another fork operation is not possible. 
         exit(1);
     }
     catch (exception ex) {
-        redisLog(REDIS_WARNING, "EndForkOperation: %s\n", ex.what());
+        serverLog(LL_WARNING, "EndForkOperation: %s\n", ex.what());
         exit(1);
     }
     return FALSE;
@@ -909,13 +909,13 @@ HANDLE CreateBlockMap(int blockIndex) {
         return map;
     }
     catch (system_error syserr) {
-        redisLog(REDIS_WARNING, "PhysicalMapMemory: system error 0x%08x - %s", syserr.code().value(), syserr.what());
+        serverLog(LL_WARNING, "PhysicalMapMemory: system error 0x%08x - %s", syserr.code().value(), syserr.what());
     }
     catch (runtime_error runerr) {
-        redisLog(REDIS_WARNING, "PhysicalMapMemory: runtime error - %s", runerr.what());
+        serverLog(LL_WARNING, "PhysicalMapMemory: runtime error - %s", runerr.what());
     }
     catch (...) {
-        redisLog(REDIS_WARNING, "PhysicalMapMemory: exception caught");
+        serverLog(LL_WARNING, "PhysicalMapMemory: exception caught");
     }
 
     return NULL;
@@ -1076,7 +1076,7 @@ BOOL FreeHeapBlock(LPVOID addr, size_t size) {
         if (!addressInRedisHeap) {
             return VirtualFree(addr, 0, MEM_RELEASE);
         } else {
-            redisLog(REDIS_DEBUG, "FreeHeapBlock: address in memory map heap 0x%p", addr);
+            serverLog(LL_DEBUG, "FreeHeapBlock: address in memory map heap 0x%p", addr);
         }
     }
 
@@ -1256,15 +1256,15 @@ extern "C"
         }
         catch (system_error syserr) {
             RedisEventLog().LogError(string("Main: system error. ") + syserr.what());
-            redisLog(REDIS_WARNING, "main: system error caught. error code=0x%08x, message=%s\n", syserr.code().value(), syserr.what());
+            serverLog(LL_WARNING, "main: system error caught. error code=0x%08x, message=%s\n", syserr.code().value(), syserr.what());
         }
         catch (runtime_error runerr) {
             RedisEventLog().LogError(string("Main: runtime error. ") + runerr.what());
-            redisLog(REDIS_WARNING, "main: runtime error caught. message=%s\n", runerr.what());
+            serverLog(LL_WARNING, "main: runtime error caught. message=%s\n", runerr.what());
         }
         catch (exception ex) {
             RedisEventLog().LogError(string("Main: an exception occurred. ") + ex.what());
-            redisLog(REDIS_WARNING, "main: other exception caught.\n");
+            serverLog(LL_WARNING, "main: other exception caught.\n");
         }
     }
 }

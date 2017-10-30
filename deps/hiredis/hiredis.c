@@ -416,7 +416,7 @@ static int processBulkItem(redisReader *r) {
             success = 1;
         } else {
             /* Only continue when the buffer contains the entire bulk item. */
-            bytelen += (PORT_ULONG) len + 2; /* include \r\n */
+            bytelen += (PORT_ULONG)len+2; /* include \r\n */
             if (r->pos+bytelen <= r->len) {
                 if (r->fn && r->fn->createString)
                     obj = r->fn->createString(cur,s+2,(size_t)len);
@@ -460,7 +460,7 @@ static int processMultiBulkItem(redisReader *r) {
     }
 
     if ((p = readLine(r,NULL)) != NULL) {
-        elements = (PORT_LONG) readLongLong(p);                                 WIN_PORT_FIX /* cast (PORT_LONG) */
+        elements = (PORT_LONG)readLongLong(p);                                 WIN_PORT_FIX /* cast (PORT_LONG) */
         root = (r->ridx == 0);
 
         if (elements == -1) {
@@ -823,11 +823,11 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
                         goto fmt_invalid;
                     }
 
-                    /* Size: long */
+                    /* Size: PORT_LONG */
                     if (_p[0] == 'l') {
                         _p += 1;
                         if (*_p != '\0' && strchr(intfmts,*_p) != NULL) {
-                            va_arg(ap, PORT_LONG);
+                            va_arg(ap,PORT_LONG);
                             goto fmt_valid;
                         }
                         goto fmt_invalid;

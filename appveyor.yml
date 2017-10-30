@@ -1,9 +1,9 @@
-version: 3.0.504.{build}
+version: 3.2.100.{build}
 
 branches:
 # whitelist
     only:
-        - '3.0'
+        - '3.2'
         - appveyor
 
 install:

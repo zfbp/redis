@@ -22,18 +22,18 @@
 #pragma once
 
 /* Log levels */
-#define REDIS_DEBUG 0
-#define REDIS_VERBOSE 1
-#define REDIS_NOTICE 2
-#define REDIS_WARNING 3
-#define REDIS_LOG_RAW (1<<10) /* Modifier to log without timestamp */
-#define REDIS_DEFAULT_VERBOSITY REDIS_NOTICE
+#define LL_DEBUG 0
+#define LL_VERBOSE 1
+#define LL_NOTICE 2
+#define LL_WARNING 3
+#define LL_RAW (1<<10) /* Modifier to log without timestamp */
+#define CONFIG_DEFAULT_VERBOSITY LL_NOTICE
 /*
  * Default maximum length of syslog messages.
  * Empirical results show that 1024 is also the maximum size that WriteFile can
  * write atomically.
  */
-#define REDIS_MAX_LOGMSG_LEN    1024
+#define LOG_MAX_LEN    1024
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,9 +42,9 @@ extern "C" {
 void setLogVerbosityLevel(int level);
 void setLogFile(const char* filename);
 const char* getLogFilename();
-void redisLogRaw(int level, const char *msg);
-void redisLog(int level, const char *fmt, ...);
-void redisLogFromHandler(int level, const char *msg);
+void serverLogRaw(int level, const char *msg);
+void serverLog(int level, const char *fmt, ...);
+void serverLogFromHandler(int level, const char *msg);
 
 #ifdef __cplusplus
 }

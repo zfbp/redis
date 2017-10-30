@@ -6,8 +6,8 @@
 #define REDIS_THREAD_STACK_SIZE (1024*1024*4)
 #define STACK_SIZE_PARAM_IS_A_RESERVATION   0x00010000    // Threads only
 
-#ifndef REDIS_NOTUSED
-#define REDIS_NOTUSED(V) ((void) V)
+#ifndef UNUSED
+#define UNUSED(V) ((void) V)
 #endif
 
 /* Proxy structure to pass func and arg to thread */
@@ -37,7 +37,7 @@ static unsigned __stdcall win32_proxy_threadproc(void *arg) {
 int pthread_create(pthread_t *thread, const void *unused, void *(*start_routine)(void*), void *arg) {
     HANDLE h;
     thread_params *params = (thread_params *) malloc(sizeof(thread_params));
-    REDIS_NOTUSED(unused);
+    UNUSED(unused);
 
     params->func = start_routine;
     params->arg = arg;
@@ -59,7 +59,7 @@ int pthread_create(pthread_t *thread, const void *unused, void *(*start_routine)
 
 /* Noop in Windows */
 int pthread_detach(pthread_t thread) {
-    REDIS_NOTUSED(thread);
+    UNUSED(thread);
     return 0;
 }
 
@@ -68,8 +68,8 @@ pthread_t pthread_self(void) {
 }
 
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oset) {
-    REDIS_NOTUSED(set);
-    REDIS_NOTUSED(oset);
+    UNUSED(set);
+    UNUSED(oset);
     switch (how) {
         case SIG_BLOCK:
         case SIG_UNBLOCK:
@@ -87,7 +87,7 @@ int pthread_sigmask(int how, const sigset_t *set, sigset_t *oset) {
 int win32_pthread_join(pthread_t *thread, void **value_ptr) {
     int result;
     HANDLE h = OpenThread(SYNCHRONIZE, FALSE, *thread);
-    REDIS_NOTUSED(value_ptr);
+    UNUSED(value_ptr);
 
     switch (WaitForSingleObject(h, INFINITE)) {
         case WAIT_OBJECT_0:
@@ -105,7 +105,7 @@ int win32_pthread_join(pthread_t *thread, void **value_ptr) {
 }
 
 int pthread_cond_init(pthread_cond_t *cond, const void *unused) {
-    REDIS_NOTUSED(unused);
+    UNUSED(unused);
     cond->waiters = 0;
     cond->was_broadcast = 0;
 

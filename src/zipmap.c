@@ -169,7 +169,7 @@ static unsigned char *zipmapLookupRaw(unsigned char *zm, unsigned char *key, uns
     return k;
 }
 
-static unsigned int zipmapRequiredLength(unsigned int klen, unsigned int vlen) { WIN_PORT_FIX /* long -> int */
+static unsigned int zipmapRequiredLength(unsigned int klen, unsigned int vlen) { WIN_PORT_FIX /* PORT_ULONG -> unsigned int */
     unsigned int l;
 
     l = klen+vlen+3;
@@ -374,8 +374,8 @@ size_t zipmapBlobLen(unsigned char *zm) {
     return totlen;
 }
 
-#ifdef ZIPMAP_TEST_MAIN
-void zipmapRepr(unsigned char *p) {
+#ifdef REDIS_TEST
+static void zipmapRepr(unsigned char *p) {
     unsigned int l;
 
     printf("{status %u}",*p++);
@@ -408,8 +408,12 @@ void zipmapRepr(unsigned char *p) {
     printf("\n");
 }
 
-int main(void) {
+#define UNUSED(x) (void)(x)
+int zipmapTest(int argc, char *argv[]) {
     unsigned char *zm;
+
+    UNUSED(argc);
+    UNUSED(argv);
 
     zm = zipmapNew();
 

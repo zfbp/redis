@@ -35,27 +35,25 @@ fork()
 
 The POSIX version of Redis uses the fork() API. There is no equivalent in Windows, and it is an exceedingly difficult API to completely simulate. For most of the uses of fork() we have used Windows specific programming idioms to bypass the need to use a fork()-like API. The one case where we could not do so was with the point-in-time heap snapshot behavior that the Redis persistence model is based on. We tried several different approaches to work around the need for a fork()-like API, but always ran into significant performance penalties and stability issues.
 
-Our current approach is to simulate the point-in-time snapshot behavior aspect of fork() without doing a complete simulation of fork(). We do this with a memory mapped file that contains the Redis heap. When a fork() operation is required we do the following:
+Our current approach is to simulate the point-in-time snapshot behavior aspect of fork() without doing a complete simulation of fork(). We do this with the system-paging file that contains the Redis heap. When a fork() operation is required we do the following:
 
--   Mark every page in the memory mapped file with the Copy on Write page protection
+-   Mark every page in the system-paging file with the Copy on Write page protection
 
--   Start a child process and pass it the handle to the memory mapped file
+-   Start a child process and pass it the handle to the system-paging file
 
--   Signal the child to start the AOF or RDB persistence process on the memory shared via the memory mapped file
+-   Signal the child to start the AOF or RDB persistence process on the memory shared via the system-paging file
 
 -   Wait (asynchronously) for the child process to finish
 
--   Map the changes in the Redis heap that occurred during the fork() operation back into the memory mapped file.
+-   Map the changes in the Redis heap that occurred during the fork() operation back into the system-paging file.
 
-The upside with this implementation is that our performance and stability is now on par with the POSIX version of Redis. The down side is that we have a runtime disk space requirement for Redis equal to the size of the Redis memory mapped heap. The disk space requirement defaults to:
-
--   The size specified by the –maxheap flag if present, otherwise
+The upside with this implementation is that our performance and stability is now on par with the POSIX version of Redis. The down side is that we have a runtime disk space requirement for Redis equal to the size of the Redis memory heap. The disk space requirement defaults to:
 
 -   50% more than the --maxmemory setting if present, otherwise
 
 -   The size of physical RAM
 
-We also have a runtime page file commit requirement that varies depending on the amount data in the Redis heap during the quasi-fork operation. The maximum for this is about 3 times the size of the memory mapped file. This is usually not a problem because the default configuration of Windows allows the page file to grow to 3.5 times the size of physical memory. There are scenarios where 3<sup>rd</sup> party programs also compete for system swap space at runtime.
+We also have a runtime page file commit requirement that varies depending on the amount data in the Redis heap during the quasi-fork operation. The maximum for this is about 3 times the size of the max-memory This is usually not a problem because the default configuration of Windows allows the page file to grow to 3.5 times the size of physical memory. There are scenarios where 3<sup>rd</sup> party programs also compete for system swap space at runtime.
 
 Logging
 -------
@@ -76,10 +74,6 @@ Binary Distributions
 The GitHub repository should be considered a work in progress until we release the NuGet and Chocolatey packages and tag the repository at that released version.
 
 For instance, the Windows Service feature has taken many iterations with community input to get right. The initial Windows service code was checked in on April 3. Since that time we have added the following to the service based on community input:
-
--   Preshutdown notification in order to clean up the memory mapped file consistently.
-
--   Code to identify and clean up orphaned memory mapped files left behind when a machine running Redis as a service crashes or loses power.
 
 -   Self elevation of the Redis executable so that service commands would work from a non-elevated command prompt.
 

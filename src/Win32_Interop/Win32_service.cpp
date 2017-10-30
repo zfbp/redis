@@ -120,7 +120,7 @@ public:
             DWORD bytesWritten = 0;
             WriteFile(pipe, message.c_str(), (DWORD)message.length(), &bytesWritten, NULL);
         } else {
-            ::redisLog(REDIS_WARNING, message.c_str());
+            ::serverLog(LL_WARNING, message.c_str());
         }
     }
 } ServicePipeWriter;
@@ -171,7 +171,7 @@ BOOL RelaunchAsElevatedProcess(int argc, char** argv) {
                 DWORD result = ReadFile(pipe, buffer, messageBufferSize, &bytesRead, NULL);
                 if (result != 0 && bytesRead > 0) {
                     buffer[bytesRead] = '\0';	// ensure received message is null terminated;
-                    ::redisLog(REDIS_WARNING, (const char*)buffer);
+                    ::serverLog(LL_WARNING, (const char*)buffer);
                 }
             }
             CloseHandle(sei.hProcess);
@@ -232,7 +232,7 @@ DWORD AddAceToObjectsSecurityDescriptor(
         DACL_SECURITY_INFORMATION,
         NULL, NULL, &pOldDACL, NULL, &pSD);
     if (ERROR_SUCCESS != dwRes) {
-        ::redisLog(REDIS_WARNING, "GetNamedSecurityInfo Error %u\n", dwRes);
+        ::serverLog(LL_WARNING, "GetNamedSecurityInfo Error %u\n", dwRes);
         goto Cleanup;
     }
 
@@ -245,7 +245,7 @@ DWORD AddAceToObjectsSecurityDescriptor(
 
     dwRes = SetEntriesInAclA(1, &ea, pOldDACL, &pNewDACL);
     if (ERROR_SUCCESS != dwRes) {
-        ::redisLog(REDIS_WARNING, "SetEntriesInAcl Error %u\n", dwRes);
+        ::serverLog(LL_WARNING, "SetEntriesInAcl Error %u\n", dwRes);
         goto Cleanup;
     }
 
@@ -253,7 +253,7 @@ DWORD AddAceToObjectsSecurityDescriptor(
         DACL_SECURITY_INFORMATION,
         NULL, NULL, pNewDACL, NULL);
     if (ERROR_SUCCESS != dwRes) {
-        ::redisLog(REDIS_WARNING, "SetNamedSecurityInfo Error %u\n", dwRes);
+        ::serverLog(LL_WARNING, "SetNamedSecurityInfo Error %u\n", dwRes);
         goto Cleanup;
     }
 

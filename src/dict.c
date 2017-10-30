@@ -209,7 +209,7 @@ int dictResize(dict *d)
 }
 
 /* Expand or create the hash table */
-int dictExpand(dict *d,PORT_ULONG size)
+int dictExpand(dict *d, PORT_ULONG size)
 {
     dictht n; /* the new hash table */
     PORT_ULONG realsize = _dictNextPower(size);
@@ -249,7 +249,7 @@ int dictExpand(dict *d,PORT_ULONG size)
  * since part of the hash table may be composed of empty spaces, it is not
  * guaranteed that this function will rehash even a single bucket, since it
  * will visit at max N*10 empty buckets in total, otherwise the amount of
- * work it does would be unbound and the function may block for a long time. */
+ * work it does would be unbound and the function may block for a PORT_LONG time. */
 int dictRehash(dict *d, int n) {
 
     // On Windows we choose not to execute the dict rehash since it's not
@@ -373,7 +373,10 @@ dictEntry *dictAddRaw(dict *d, void *key)
     if ((index = _dictKeyIndex(d, key)) == -1)
         return NULL;
 
-    /* Allocate the memory and store the new entry */
+    /* Allocate the memory and store the new entry.
+     * Insert the element in top, with the assumption that in a database
+     * system it is more likely that recently added entries are accessed
+     * more frequently. */
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
     entry = zmalloc(sizeof(*entry));
     entry->next = ht->table[index];
@@ -438,7 +441,7 @@ static int dictGenericDelete(dict *d, const void *key, int nofree)
         he = d->ht[table].table[idx];
         prevHe = NULL;
         while(he) {
-            if (dictCompareKeys(d, key, he->key)) {
+            if (key==he->key || dictCompareKeys(d, key, he->key)) {
                 /* Unlink the element from the list */
                 if (prevHe)
                     prevHe->next = he->next;
@@ -508,14 +511,14 @@ dictEntry *dictFind(dict *d, const void *key)
     dictEntry *he;
     unsigned int h, idx, table;
 
-    if (d->ht[0].size == 0) return NULL; /* We don't have a table at all */
+    if (d->ht[0].used + d->ht[1].used == 0) return NULL; /* dict is empty */
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
     for (table = 0; table <= 1; table++) {
         idx = h & d->ht[table].sizemask;
         he = d->ht[table].table[idx];
         while(he) {
-            if (dictCompareKeys(d, key, he->key))
+            if (key==he->key || dictCompareKeys(d, key, he->key))
                 return he;
             he = he->next;
         }
@@ -701,10 +704,10 @@ dictEntry *dictGetRandomKey(dict *d)
  * statistics. However the function is much faster than dictGetRandomKey()
  * at producing N elements. */
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
-    unsigned int j; /* internal hash table id, 0 or 1. */
-    unsigned int tables; /* 1 or 2 tables? */
-    unsigned int stored = 0, maxsizemask;
-    unsigned int maxsteps;
+    PORT_ULONG j; /* internal hash table id, 0 or 1. */
+    PORT_ULONG tables; /* 1 or 2 tables? */
+    PORT_ULONG stored = 0, maxsizemask;
+    PORT_ULONG maxsteps;
 
     if (dictSize(d) < count) count = (unsigned int)dictSize(d);                 WIN_PORT_FIX /* cast (unsigned int) */
     maxsteps = count*10;
@@ -723,14 +726,14 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
         maxsizemask = (unsigned int) d->ht[1].sizemask;                         WIN_PORT_FIX /* cast (unsigned int) */
 
     /* Pick a random point inside the larger table. */
-    unsigned int i = random() & maxsizemask;
-    unsigned int emptylen = 0; /* Continuous empty entries so far. */
+    PORT_ULONG i = random() & maxsizemask;
+    PORT_ULONG emptylen = 0; /* Continuous empty entries so far. */
     while(stored < count && maxsteps--) {
         for (j = 0; j < tables; j++) {
             /* Invariant of the dict.c rehashing: up to the indexes already
              * visited in ht[0] during the rehashing, there are no populated
              * buckets, so we can skip ht[0] for indexes between 0 and idx-1. */
-            if (tables == 2 && j == 0 && i < (unsigned int) d->rehashidx) {
+            if (tables == 2 && j == 0 && i < (PORT_ULONG) d->rehashidx) {
                 /* Moreover, if we are currently out of range in the second
                  * table, there will be no elements in both tables up to
                  * the current rehashing index, so we jump if possible.
@@ -758,13 +761,13 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
                     des++;
                     he = he->next;
                     stored++;
-                    if (stored == count) return stored;
+                    if (stored == count) return (unsigned int)stored;           WIN_PORT_FIX /* cast (unsigned int) */
                 }
             }
         }
         i = (i+1) & maxsizemask;
     }
-    return stored;
+    return (unsigned int)stored;                                                WIN_PORT_FIX /* cast (unsigned int) */
 }
 
 /* Function to reverse bits. Algorithm from:
@@ -992,7 +995,7 @@ static int _dictKeyIndex(dict *d, const void *key)
         /* Search if this slot does not already contain the given key */
         he = d->ht[table].table[idx];
         while(he) {
-            if (dictCompareKeys(d, key, he->key))
+            if (key==he->key || dictCompareKeys(d, key, he->key))
                 return -1;
             he = he->next;
         }
@@ -1016,24 +1019,21 @@ void dictDisableResize(void) {
     dict_can_resize = 0;
 }
 
-#if 0
-
-/* The following is code that we don't use for Redis currently, but that is part
-of the library. */
-
-/* ----------------------- Debugging ------------------------*/
+/* ------------------------------- Debugging ---------------------------------*/
 
 #define DICT_STATS_VECTLEN 50
-static void _dictPrintStatsHt(dictht *ht) {
+size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
     PORT_ULONG i, slots = 0, chainlen, maxchainlen = 0;
     PORT_ULONG totchainlen = 0;
     PORT_ULONG clvector[DICT_STATS_VECTLEN];
+    size_t l = 0;
 
     if (ht->used == 0) {
-        printf("No stats available for empty dictionaries\n");
-        return;
+        return snprintf(buf,bufsize,
+            "No stats available for empty dictionaries\n");
     }
 
+    /* Compute stats. */
     for (i = 0; i < DICT_STATS_VECTLEN; i++) clvector[i] = 0;
     for (i = 0; i < ht->size; i++) {
         dictEntry *he;
@@ -1054,89 +1054,46 @@ static void _dictPrintStatsHt(dictht *ht) {
         if (chainlen > maxchainlen) maxchainlen = chainlen;
         totchainlen += chainlen;
     }
-    printf("Hash table stats:\n");
-    printf(" table size: %ld\n", ht->size);
-    printf(" number of elements: %ld\n", ht->used);
-    printf(" different slots: %ld\n", slots);
-    printf(" max chain length: %ld\n", maxchainlen);
-    printf(" avg chain length (counted): %.02f\n", (float)totchainlen/slots);
-    printf(" avg chain length (computed): %.02f\n", (float)ht->used/slots);
-    printf(" Chain length distribution:\n");
+
+    /* Generate human readable stats. */
+    l += snprintf(buf+l,bufsize-l,
+        "Hash table %d stats (%s):\n"
+        " table size: %ld\n"
+        " number of elements: %ld\n"
+        " different slots: %ld\n"
+        " max chain length: %ld\n"
+        " avg chain length (counted): %.02f\n"
+        " avg chain length (computed): %.02f\n"
+        " Chain length distribution:\n",
+        tableid, (tableid == 0) ? "main hash table" : "rehashing target",
+        ht->size, ht->used, slots, maxchainlen,
+        (float)totchainlen/slots, (float)ht->used/slots);
+
     for (i = 0; i < DICT_STATS_VECTLEN-1; i++) {
         if (clvector[i] == 0) continue;
-        printf("   %s%ld: %ld (%.02f%%)\n",(i == DICT_STATS_VECTLEN-1)?">= ":"", i, clvector[i], ((float)clvector[i]/ht->size)*100);
+        if (l >= bufsize) break;
+        l += snprintf(buf+l,bufsize-l,
+            "   %s%ld: %ld (%.02f%%)\n",
+            (i == DICT_STATS_VECTLEN-1)?">= ":"",
+            i, clvector[i], ((float)clvector[i]/ht->size)*100);
     }
+
+    /* Unlike snprintf(), teturn the number of characters actually written. */
+    if (bufsize) buf[bufsize-1] = '\0';
+    return strlen(buf);
 }
 
-void dictPrintStats(dict *d) {
-    _dictPrintStatsHt(&d->ht[0]);
-    if (dictIsRehashing(d)) {
-        printf("-- Rehashing into ht[1]:\n");
-        _dictPrintStatsHt(&d->ht[1]);
+void dictGetStats(char *buf, size_t bufsize, dict *d) {
+    size_t l;
+    char *orig_buf = buf;
+    size_t orig_bufsize = bufsize;
+
+    l = _dictGetStatsHt(buf,bufsize,&d->ht[0],0);
+    buf += l;
+    bufsize -= l;
+    if (dictIsRehashing(d) && bufsize > 0) {
+        _dictGetStatsHt(buf,bufsize,&d->ht[1],1);
     }
+    /* Make sure there is a NULL term at the end. */
+    if (orig_bufsize) orig_buf[orig_bufsize-1] = '\0';
 }
-
-/* ----------------------- StringCopy Hash Table Type ------------------------*/
-
-static unsigned int _dictStringCopyHTHashFunction(const void *key)
-{
-    return dictGenHashFunction(key, strlen(key));
-}
-
-static void *_dictStringDup(void *privdata, const void *key)
-{
-    int len = strlen(key);
-    char *copy = zmalloc(len+1);
-    DICT_NOTUSED(privdata);
-
-    memcpy(copy, key, len);
-    copy[len] = '\0';
-    return copy;
-}
-
-static int _dictStringCopyHTKeyCompare(void *privdata, const void *key1,
-        const void *key2)
-{
-    DICT_NOTUSED(privdata);
-
-    return strcmp(key1, key2) == 0;
-}
-
-static void _dictStringDestructor(void *privdata, void *key)
-{
-    DICT_NOTUSED(privdata);
-
-    zfree(key);
-}
-
-dictType dictTypeHeapStringCopyKey = {
-    _dictStringCopyHTHashFunction, /* hash function */
-    _dictStringDup,                /* key dup */
-    NULL,                          /* val dup */
-    _dictStringCopyHTKeyCompare,   /* key compare */
-    _dictStringDestructor,         /* key destructor */
-    NULL                           /* val destructor */
-};
-
-/* This is like StringCopy but does not auto-duplicate the key.
- * It's used for intepreter's shared strings. */
-dictType dictTypeHeapStrings = {
-    _dictStringCopyHTHashFunction, /* hash function */
-    NULL,                          /* key dup */
-    NULL,                          /* val dup */
-    _dictStringCopyHTKeyCompare,   /* key compare */
-    _dictStringDestructor,         /* key destructor */
-    NULL                           /* val destructor */
-};
-
-/* This is like StringCopy but also automatically handle dynamic
- * allocated C strings as values. */
-dictType dictTypeHeapStringCopyKeyValue = {
-    _dictStringCopyHTHashFunction, /* hash function */
-    _dictStringDup,                /* key dup */
-    _dictStringDup,                /* val dup */
-    _dictStringCopyHTKeyCompare,   /* key compare */
-    _dictStringDestructor,         /* key destructor */
-    _dictStringDestructor,         /* val destructor */
-};
-#endif

@@ -103,7 +103,6 @@ namespace ReleasePackagingTool
             {
                 "redis-benchmark.exe",
                 "redis-check-aof.exe",
-                "redis-check-dump.exe",
                 "redis-cli.exe",
                 "redis-server.exe"
             };
@@ -111,7 +110,6 @@ namespace ReleasePackagingTool
             {
                 "redis-benchmark.pdb",
                 "redis-check-aof.pdb",
-                "redis-check-dump.pdb",
                 "redis-cli.pdb",
                 "redis-server.pdb"
             };

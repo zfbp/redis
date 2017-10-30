@@ -292,7 +292,8 @@ public:
             { "known-slave",                &fp3 },    // sentinel known-slave <name> <ip> <port>
             { "known-sentinel",             &fp4 },    // sentinel known-sentinel <name> <ip> <port> [runid]
             { "announce-ip",                &fp1 },    // sentinel announce-ip <ip>
-            { "announce-port",              &fp1 }     // sentinel announce-port <port>
+            { "announce-port",              &fp1 },    // sentinel announce-port <port>
+            { "myid",                       &fp1 }     // sentinel myid <id>
         };
     }
 
@@ -415,8 +416,10 @@ static RedisParamterMapper g_redisArgMap =
     { "notify-keyspace-events",         &fp1 },    // notify-keyspace-events [string]
     { "hash-max-ziplist-entries",       &fp1 },    // hash-max-ziplist-entries [number]
     { "hash-max-ziplist-value",         &fp1 },    // hash-max-ziplist-value [number]
-    { "list-max-ziplist-entries",       &fp1 },    // list-max-ziplist-entries [number]
-    { "list-max-ziplist-value",         &fp1 },    // list-max-ziplist-value [number]
+    { "list-max-ziplist-entries",       &fp1 },    // list-max-ziplist-entries [number]     DEAD OPTION
+    { "list-max-ziplist-value",         &fp1 },    // list-max-ziplist-value [number]       DEAD OPTION
+    { "list-max-ziplist-size",          &fp1 },    // list-max-ziplist-size [number]
+    { "list-compress-depth",            &fp1 },    // list-compress-depth[number]
     { "set-max-intset-entries",         &fp1 },    // set-max-intset-entries [number]
     { "zset-max-ziplist-entries",       &fp1 },    // zset-max-ziplist-entries [number]
     { "zset-max-ziplist-value",         &fp1 },    // zset-max-ziplist-value [number]
@@ -427,6 +430,9 @@ static RedisParamterMapper g_redisArgMap =
     { "aof-rewrite-incremental-fsync",  &fp1 },    // aof-rewrite-incremental-fsync [yes/no]
     { "aof-load-truncated",             &fp1 },    // aof-load-truncated [yes/no]
     { "latency-monitor-threshold",      &fp1 },    // latency-monitor-threshold [number]
+    { "protected-mode",                 &fp1 },    // protected-mode [yes/no]
+    { "watchdog-period",                &fp1 },    // watchdog-period [number]
+    { "supervised",                     &fp1},     // supervised [upstart|systemd|auto|no]
     { cInclude,                         &fp1 },    // include [path]
 
     // sentinel commands

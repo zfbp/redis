@@ -45,7 +45,7 @@
 /* -------------------------- private prototypes ---------------------------- */
 
 static int _dictExpandIfNeeded(dict *ht);
-static PORT_ULONG _dictNextPower(PORT_ULONG);
+static PORT_ULONG _dictNextPower(PORT_ULONG size);
 static int _dictKeyIndex(dict *ht, const void *key);
 static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
 

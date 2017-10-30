@@ -37,7 +37,7 @@
 
 using namespace std;
 
-#define CATCH_AND_REPORT()  catch(const std::exception &){::redisLog(REDIS_WARNING, "FDAPI: std exception");}catch(...){::redisLog(REDIS_WARNING, "FDAPI: other exception");}
+#define CATCH_AND_REPORT()  catch(const std::exception &){::serverLog(LL_WARNING, "FDAPI: std exception");}catch(...){::serverLog(LL_WARNING, "FDAPI: other exception");}
 
 extern "C" {
 // Unix compatible FD based routines
@@ -411,10 +411,10 @@ void FDAPI_ClearSocketInfo(int rfd) {
             RFDMap::getInstance().removeRFDToSocketInfo(rfd);
             return;
         } else {
-            redisLog(REDIS_WARNING, "FDAPI_ClearSocketInfo called on non closed socket.");
+            serverLog(LL_WARNING, "FDAPI_ClearSocketInfo called on non closed socket.");
         }
     } else {
-        redisLog(REDIS_WARNING, "FDAPI_ClearSocketInfo called on non attached socket.");
+        serverLog(LL_WARNING, "FDAPI_ClearSocketInfo called on non attached socket.");
     }
 }
 

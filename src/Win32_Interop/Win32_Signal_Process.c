@@ -23,12 +23,12 @@
 #include "Win32_Signal_Process.h"
 #include <errno.h>
 
-/* Redefined here to avoid redis.h so it can be used in other projects */
-#define REDIS_NOTUSED(V) ((void) V)
+/* Redefined here to avoid server.h so it can be used in other projects */
+#define UNUSED(V) ((void) V)
 
 /* Behaves as posix, works without ifdefs, makes compiler happy */
 int sigaction(int sig, struct sigaction *in, struct sigaction *out) {
-    REDIS_NOTUSED(out);
+    UNUSED(out);
 
     /* When the SA_SIGINFO flag is set in sa_flags then sa_sigaction
     * is used. Otherwise, sa_handler is used */

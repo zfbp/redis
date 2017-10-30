@@ -35,7 +35,7 @@
 
 static const char ellipsis[] = "[...]";
 static const char ellipsisWithNewLine[] = "[...]\n";
-static int verbosity = REDIS_WARNING;
+static int verbosity = LL_WARNING;
 static HANDLE hLogFile = INVALID_HANDLE_VALUE;
 static int isStdout = 0;
 static char* logFilename = NULL;
@@ -54,7 +54,7 @@ const char* getLogFilename() {
 }
 
 /* We keep the file handle open to improve performance.
- * This assumes that calls to redisLog and setLogFile will not happen
+ * This assumes that calls to serverLog and setLogFile will not happen
  * concurrently.
  */
 void setLogFile(const char* filename)
@@ -65,7 +65,7 @@ void setLogFile(const char* filename)
     }
     logFilename = (char*) malloc(strlen(filename) + 1);
     if (logFilename == NULL) {
-        redisLog(REDIS_WARNING, "memory allocation failure");
+        serverLog(LL_WARNING, "memory allocation failure");
         return;
     }
     memset(logFilename, 0, strlen(filename) + 1);
@@ -117,7 +117,7 @@ void setLogFile(const char* filename)
     }
 }
     
-void redisLogRaw(int level, const char *msg) {
+void serverLogRaw(int level, const char *msg) {
     const char *c = ".-*#";
     DWORD dwBytesWritten;
     /* The complete message needs to be passed to WriteFile at once, to ensure
@@ -125,10 +125,10 @@ void redisLogRaw(int level, const char *msg) {
      * So we format the complete message into a buffer first.
      * Any output that doesn't fit the size of this buffer will be truncated.
      */
-    char buf[REDIS_MAX_LOGMSG_LEN];
+    char buf[LOG_MAX_LEN];
     const char *completeMessage;
     DWORD completeMessageLength;
-    int rawmode = (level & REDIS_LOG_RAW);
+    int rawmode = (level & LL_RAW);
 
     level &= 0xff; /* clear flags */
     if (level < verbosity) return;
@@ -183,12 +183,12 @@ void redisLogRaw(int level, const char *msg) {
     }
 }
 
-/* Like redisLogRaw() but with printf-alike support. This is the function that
+/* Like serverLogRaw() but with printf-alike support. This is the function that
  * is used across the code. The raw version is only used in order to dump
  * the INFO output on crash. */
-void redisLog(int level, const char *fmt, ...) {
+void serverLog(int level, const char *fmt, ...) {
     va_list ap;
-    char msg[REDIS_MAX_LOGMSG_LEN];
+    char msg[LOG_MAX_LEN];
     int vlen;
 
     if ((level&0xff) < verbosity) return;
@@ -205,7 +205,7 @@ void redisLog(int level, const char *fmt, ...) {
         strncpy(msg + sizeof(msg) - sizeof(ellipsis), ellipsis, sizeof(ellipsis));
     }
 
-    redisLogRaw(level,msg);
+    serverLogRaw(level,msg);
 }
 
 /* Log a fixed message without printf-alike capabilities, in a way that is
@@ -213,8 +213,8 @@ void redisLog(int level, const char *fmt, ...) {
  *
  * We actually use this only for signals that are not fatal from the point
  * of view of Redis. Signals that are going to kill the server anyway and
- * where we need printf-alike features are served by redisLog(). */
-void redisLogFromHandler(int level, const char *msg) {
+ * where we need printf-alike features are served by serverLog(). */
+void serverLogFromHandler(int level, const char *msg) {
 }
 
 

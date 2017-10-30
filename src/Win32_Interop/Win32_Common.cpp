@@ -36,6 +36,7 @@ void EnsureMemoryIsMapped(const void *buffer, size_t size) {
     // Use 'volatile' to make sure the compiler doesn't remove the memory access
     for (volatile char* p = pFirstPage; p <= pLastPage; p += Globals::pageSize) {
         volatile char c = *p;
+
     }
 }
 

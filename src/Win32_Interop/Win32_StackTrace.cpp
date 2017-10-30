@@ -127,7 +127,7 @@ void LogStackTrace() {
             GetModuleFileNameA((HINSTANCE) moduleBase, modulePath, MAX_PATH);
         }
 
-        redisLog(REDIS_WARNING | REDIS_LOG_RAW, "%s!%s(%s:%d)(0x%08LX, 0x%08LX, 0x%08LX, 0x%08LX)\n",
+        serverLog(LL_WARNING | LL_RAW, "%s!%s(%s:%d)(0x%08LX, 0x%08LX, 0x%08LX, 0x%08LX)\n",
             &modulePath[GetFilenameStart(modulePath)],
             pSymbol->Name,
             line.FileName,
@@ -148,18 +148,18 @@ void LogStackTrace() {}
 #endif
 
 void StackTraceInfo() {
-    redisLog(REDIS_WARNING, "--- STACK TRACE");
+    serverLog(LL_WARNING, "--- STACK TRACE");
     LogStackTrace();
 }
 
 void ServerInfo() {
-    redisLog(REDIS_WARNING, "--- INFO OUTPUT");
+    serverLog(LL_WARNING, "--- INFO OUTPUT");
     // Call antirez routine to log the info output
-    redisLogRaw(REDIS_WARNING | REDIS_LOG_RAW, genRedisInfoString("all"));
+    serverLogRaw(LL_WARNING | LL_RAW, genRedisInfoString("all"));
 }
 
 void BugReportEnd(){
-    redisLogRaw(REDIS_WARNING,
+    serverLogRaw(LL_WARNING,
         "\n=== REDIS BUG REPORT END. Make sure to include from START to END. ===\n\n"
         "       Please report this bug by following the instructions at:\n\n"
         "     http://github.com/MSOpenTech/redis/wiki/Submitting-an-Issue\n\n"
@@ -180,7 +180,7 @@ LONG WINAPI UnhandledExceptiontHandler(PEXCEPTION_POINTERS info) {
             // Call antirez routine to log the start of the bug report
             bugReportStart();
             headerLogged = true;
-            redisLog(REDIS_WARNING, "--- %s", exDescription);
+            serverLog(LL_WARNING, "--- %s", exDescription);
             StackTraceInfo();
             ServerInfo();
         }
@@ -203,7 +203,7 @@ LONG WINAPI UnhandledExceptiontHandler(PEXCEPTION_POINTERS info) {
 /* Handler to trap abort() calls */
 extern "C" void AbortHandler(int signal_number) {
     bugReportStart();
-    redisLog(REDIS_WARNING, "--- ABORT");
+    serverLog(LL_WARNING, "--- ABORT");
     StackTraceInfo();
     BugReportEnd();
 }

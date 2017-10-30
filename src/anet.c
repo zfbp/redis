@@ -134,6 +134,7 @@ int anetKeepAlive(char *err, int fd, int interval)
         return ANET_ERR;
     } 
 #else
+#ifdef __linux__
     /* Default settings are more or less garbage, with the keepalive time
      * set to 7200 by default on Linux. Modify settings to make the feature
      * actually useful. */
@@ -162,6 +163,9 @@ int anetKeepAlive(char *err, int fd, int interval)
         anetSetError(err, "setsockopt TCP_KEEPCNT: %s\n", strerror(errno));
         return ANET_ERR;
     }
+#else
+    ((void) interval); /* Avoid unused var warning for non Linux systems. */
+#endif
 #endif
 
     return ANET_OK;
@@ -278,7 +282,7 @@ static int anetSetReuseAddr(char *err, int fd) {
 static int anetCreateSocket(char *err, int domain) {
     int s;
     if ((s = socket(domain, SOCK_STREAM, IF_WIN32(IPPROTO_TCP,0))) == -1) {
-        anetSetError(err, "create socket error: %s", strerror(errno));
+        anetSetError(err, "creating socket: %s", strerror(errno));
         return ANET_ERR;
     }
 
@@ -312,8 +316,10 @@ static int anetTcpGenericConnect(char *err, char *addr, int port,
     FDAPI_SaveSocketAddrStorage(fd, &socketStorage);
 
     if (WSIOCP_SocketConnect(fd, &socketStorage) == SOCKET_ERROR) {
-        if ((errno == WSAEWOULDBLOCK || errno == WSA_IO_PENDING)) errno = EINPROGRESS;
-        if (errno == EINPROGRESS && flags & ANET_CONNECT_NONBLOCK) {
+        if ((errno == WSAEWOULDBLOCK) || (errno == WSA_IO_PENDING)) {
+            errno = EINPROGRESS;
+        }
+        if ((errno == EINPROGRESS) && (flags & ANET_CONNECT_NONBLOCK)) {
             return fd;
         }
 
@@ -478,30 +484,30 @@ int anetUnixNonBlockConnect(char *err, char *path)
  * (unless error or EOF condition is encountered) */
 int anetRead(int fd, char *buf, int count)
 {
-    int nread, totlen = 0;
+    ssize_t nread, totlen = 0;
     while(totlen != count) {
-        nread = (int)read(fd,buf,count-totlen);                                 WIN_PORT_FIX /* cast (int) */
-        if (nread == 0) return totlen;
+        nread = read(fd,buf,count-totlen);
+        if (nread == 0) return (int)totlen;                                     WIN_PORT_FIX /* cast int */
         if (nread == -1) return -1;
         totlen += nread;
         buf += nread;
     }
-    return totlen;
+    return (int)totlen;                                                         WIN_PORT_FIX /* cast int */
 }
 
-/* Like write(2) but make sure 'count' is read before to return
+/* Like write(2) but make sure 'count' is written before to return
  * (unless error is encountered) */
 int anetWrite(int fd, char *buf, int count)
 {
-    int nwritten, totlen = 0;
+    ssize_t nwritten, totlen = 0;
     while(totlen != count) {
-        nwritten = (int)write(fd,buf,count-totlen);                             WIN_PORT_FIX /* cast (int) */
-        if (nwritten == 0) return totlen;
+        nwritten = write(fd,buf,count-totlen);
+        if (nwritten == 0) return (int)totlen;                                  WIN_PORT_FIX /* cast int */
         if (nwritten == -1) return -1;
         totlen += nwritten;
         buf += nwritten;
     }
-    return totlen;
+    return (int)totlen;                                                         WIN_PORT_FIX /* cast int */
 }
 
 static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int backlog) {
@@ -536,8 +542,8 @@ static int anetV6Only(char *err, int s) {
 #ifdef _WIN32
 static int anetSetExclusiveAddr(char *err, int fd) {
     int yes = 1;
-    /* Make sure connection-intensive things like the redis benckmark
-    * will be able to close/open sockets a zillion of times */
+    /* Make sure connection-intensive things like the redis benchmark
+     * will be able to close/open sockets a zillion of times */
     if (setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &yes, sizeof(yes)) == -1) {
         anetSetError(err, "setsockopt SO_EXCLUSIVEADDRUSE: %s", strerror(errno));
         return ANET_ERR;
@@ -572,7 +578,7 @@ static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backl
         goto end;
     }
     if (p == NULL) {
-        anetSetError(err, "unable to bind socket");
+        anetSetError(err, "unable to bind socket, errno: %d", errno);
         goto error;
     }
 
@@ -621,7 +627,7 @@ int anetUnixServer(char *err, char *path, mode_t perm, int backlog)
 int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *len) {
     int fd;
     while(1) {
-        fd = IF_WIN32(WSIOCP_Accept, accept)(s, sa, len);
+        fd = IF_WIN32(WSIOCP_Accept,accept)(s,sa,len);
         if (fd == -1) {
             if (errno == EINTR)
                 continue;
@@ -674,12 +680,9 @@ int anetPeerToString(int fd, char *ip, size_t ip_len, int *port) {
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(sa);
 
-    if (getpeername(fd, (struct sockaddr*)&sa, &salen) == -1) {
-        if (port) *port = 0;
-        ip[0] = '?';
-        ip[1] = '\0';
-        return -1;
-    }
+    if (getpeername(fd,(struct sockaddr*)&sa,&salen) == -1) goto error;
+    if (ip_len == 0) goto error;
+
     if (sa.ss_family == AF_INET) {
         struct sockaddr_in *s = (struct sockaddr_in *)&sa;
         if (ip) inet_ntop(AF_INET,(void*)&(s->sin_addr),ip,ip_len);
@@ -709,6 +712,23 @@ error:
     return -1;
 }
 
+/* Format an IP,port pair into something easy to parse. If IP is IPv6
+ * (matches for ":"), the ip is surrounded by []. IP and port are just
+ * separated by colons. This the standard to display addresses within Redis. */
+int anetFormatAddr(char *buf, size_t buf_len, char *ip, int port) {
+    return snprintf(buf,buf_len, strchr(ip,':') ?
+           "[%s]:%d" : "%s:%d", ip, port);
+}
+
+/* Like anetFormatAddr() but extract ip and port from the socket's peer. */
+int anetFormatPeer(int fd, char *buf, size_t buf_len) {
+    char ip[INET6_ADDRSTRLEN];
+    int port;
+
+    anetPeerToString(fd,ip,sizeof(ip),&port);
+    return anetFormatAddr(buf, buf_len, ip, port);
+}
+
 int anetSockName(int fd, char *ip, size_t ip_len, int *port) {
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(sa);
@@ -729,4 +749,12 @@ int anetSockName(int fd, char *ip, size_t ip_len, int *port) {
         if (port) *port = ntohs(s->sin6_port);
     }
     return 0;
+}
+
+int anetFormatSock(int fd, char *fmt, size_t fmt_len) {
+    char ip[INET6_ADDRSTRLEN];
+    int port;
+
+    anetSockName(fd,ip,sizeof(ip),&port);
+    return anetFormatAddr(fmt, fmt_len, ip, port);
 }

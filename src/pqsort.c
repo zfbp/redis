@@ -76,7 +76,7 @@ swapfunc(char *a, char *b, size_t n, int swaptype)
 {
 
 	if (swaptype <= 1)
-        swapcode(PORT_LONG, a, b, n)
+		swapcode(PORT_LONG, a, b, n)
 	else
 		swapcode(char, a, b, n)
 }
