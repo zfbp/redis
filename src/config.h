@@ -217,5 +217,3 @@ void setproctitle(const char *fmt, ...);
 #endif
 #endif
 #endif
-
-#endif
